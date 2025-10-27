@@ -15,8 +15,7 @@
       "http": {
         "all": true,
         "scope": [
-          "https://spliceproduction.s3.*.amazonaws.com/**",
-          "https://surfaces-graphql.splice.com/graphql"
+          "https://**"
         ]
       },
       "shell": {

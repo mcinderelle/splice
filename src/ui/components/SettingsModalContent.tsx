@@ -93,12 +93,12 @@ export default function SettingsModalContent() {
           <br />
 
           <div className="text-foreground-400 text-small">
-            check out the project on <Link href="https://github.com/ascpixi/splicedd" target="_blank">GitHub!</Link>
+            check out the project on <Link href="https://github.com/mcinderelle/splice" target="_blank">GitHub!</Link>
             <br />
 
             (developed with
             <img src="img/blob-heart.png" className="w-4 inline mx-2"/>
-            by <Link href="https://ascpixi.github.io" target="_blank">@ascpixi</Link>)
+            by <Link href="https://github.com/mcinderelle" target="_blank">Mayukhjit Chakraborty</Link>)
           </div>
         </ModalBody>
       </>

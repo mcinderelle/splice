@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.2.0",
   "type": "module",
+  "author": "Mayukhjit Chakraborty <https://github.com/mcinderelle>",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

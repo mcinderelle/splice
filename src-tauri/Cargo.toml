@@ -2,7 +2,7 @@
 name = "splicedd"
 version = "1.1.1"
 description = "A custom frontend for the Splice sample library"
-authors = ["ascpixi"]
+authors = ["Mayukhjit Chakraborty <https://github.com/mcinderelle>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

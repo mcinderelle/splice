@@ -131,6 +131,4 @@ This project is open source. Check the LICENSE file for details.
 
 ## Credits
 
-**Developed by [@mcinderelle](https://github.com/mcinderelle) - Made without AI**
-
-Original Splice API integration by [Mayukhjit Chakraborty](https://github.com/mayukhjit)
+**Developed by [Mayukhjit Chakraborty](https://github.com/mcinderelle) - Made without AI**

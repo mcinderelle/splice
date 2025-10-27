@@ -239,7 +239,7 @@ function App() {
           <span className="font-medium text-gray-300">Made without AI by</span>
           <a href="https://github.com/mcinderelle" target="_blank" rel="noopener noreferrer" 
              className="font-semibold hover:text-white transition-colors underline">
-            @mcinderelle
+            Mayukhjit Chakraborty
           </a>
         </div>
       </div>

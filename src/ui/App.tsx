@@ -265,14 +265,13 @@ function App() {
             startContent={
               <SearchIcon className="w-5" />
             }
-            className="flex-1"
+            className="w-full max-w-2xl"
           />
 
         <Select variant="bordered"
           aria-label="Sort by"
           selectedKeys={[sortBy]} onChange={(e: any) => setSortBy(e.target.value as SpliceSortBy)}
-          startContent={<span className="w-20 text-sm text-foreground-400">Sort: </span>}
-          className="min-w-40"
+          className="w-48"
         >
             <SelectItem key="relevance">Most relevant</SelectItem>
             <SelectItem key="popularity">Most popular</SelectItem>
@@ -300,7 +299,7 @@ function App() {
           selectionMode="multiple" onOpenChange={ensureContraintsGathered}
           selectedKeys={instruments}
           onSelectionChange={(x: any) => setInstruments(x as Set<string>)}
-          className="min-w-48 flex-1"
+          className="min-w-56"
         >
           { knownInstruments.map((x: any) => <SelectItem key={x.uuid}>{x.name}</SelectItem>) }
         </Select>
@@ -309,7 +308,7 @@ function App() {
           selectionMode="multiple" onOpenChange={ensureContraintsGathered}
           selectedKeys={genres}
           onSelectionChange={(x: any) => setGenres(x as Set<string>)}
-          className="min-w-48 flex-1"
+          className="min-w-56"
         >
           { knownGenres.map((x: any) => <SelectItem key={x.uuid}>{x.name}</SelectItem>) }
         </Select>
@@ -318,14 +317,14 @@ function App() {
           selectionMode="multiple"
           selectedKeys={Array.from(tags).map((x: any) => x.uuid)}
           onSelectionChange={(x: any) => updateTagState(x as Set<string>)}
-          className="min-w-48 flex-1"
+          className="min-w-56"
         >
           { Array.from(tags).map((x: any) => <SelectItem key={x.uuid}>{x.label}</SelectItem>) }
         </Select>
 
         <Popover placement="bottom" showArrow={true}>
           <PopoverTrigger>
-            <Button variant="bordered" className="min-w-32" endContent={<ChevronDownIcon/>}>
+            <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>}>
               { 
                 (musicKey == null && chordType == null) ? "Key"
                   : `${musicKey ?? ""}${chordType == null ? "" : chordType == "major" ? " Major" : " Minor"}`
@@ -343,7 +342,7 @@ function App() {
 
         <Popover placement="bottom" showArrow={true}>
           <PopoverTrigger>
-            <Button variant="bordered" className="min-w-32" endContent={<ChevronDownIcon/>}>
+            <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>}>
               { (bpmType == "exact" && bpm?.bpm
                   ? `${bpm?.bpm} BPM`
                   : bpmType == "range" && bpm?.maxBpm && bpm.minBpm
@@ -398,7 +397,7 @@ function App() {
 
         <Select aria-label="Type"
           selectedKeys={[sampleType]} onChange={(e: any) => setSampleType(e.target.value as SpliceSampleType)}
-          variant="bordered" className="min-w-40"
+          variant="bordered" className="min-w-44"
         >
           <SelectItem key="any">Any</SelectItem>
           <SelectItem key="oneshot">One-Shots</SelectItem>

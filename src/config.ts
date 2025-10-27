@@ -35,6 +35,13 @@ export function cfg(): SpliceddConfig {
  */
 export async function mutateCfg(values: Partial<SpliceddConfig>) {
   globalCfg = { ...globalCfg, ...values }
+  
+  // Browser mode - save to localStorage
+  if (typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__) {
+    localStorage.setItem('splice-config', JSON.stringify(globalCfg));
+    return;
+  }
+  
   await saveConfig();
 }
 
@@ -42,6 +49,19 @@ export async function mutateCfg(values: Partial<SpliceddConfig>) {
  * Loads user configuration from the config file. Usually is called only called once on startup.
  */
 export async function loadConfig() {
+  // Check if we're in a browser environment
+  if (typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__) {
+    // Browser mode - use localStorage as fallback
+    const savedConfig = localStorage.getItem('splice-config');
+    if (savedConfig) {
+      globalCfg = { ...defaultCfg(), ...JSON.parse(savedConfig) };
+    } else {
+      globalCfg = defaultCfg();
+    }
+    return;
+  }
+
+  // Tauri mode - use actual file system
   const appConfig = await appConfigDir();
   if (!await exists(appConfig))
     await createDir(appConfig);
@@ -61,6 +81,12 @@ export async function loadConfig() {
  * Synchronizes the in-memory configuration object with the config file stored on disk.
  */
 export async function saveConfig() {
+  // Browser mode - use localStorage
+  if (typeof window !== 'undefined' && !(window as any).__TAURI_INTERNALS__) {
+    localStorage.setItem('splice-config', JSON.stringify(globalCfg));
+    return;
+  }
+  
   await writeTextFile("config.json", JSON.stringify(globalCfg, null, 2), {
     dir: BaseDirectory.AppConfig
   });

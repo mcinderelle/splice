@@ -2,15 +2,9 @@ import { Chip, CircularProgress, Tooltip } from "@nextui-org/react";
 import { ClockCircleLinearIcon, ClockSquareBoldIcon } from '@nextui-org/shared-icons'
 import { MusicalNoteIcon } from "@heroicons/react/20/solid";
 import { PlayIcon, StopIcon } from "@heroicons/react/20/solid";
-
-import { Response, ResponseType, fetch } from '@tauri-apps/api/http';
 import { useState } from "react";
-import { startDrag } from "@crabnebula/tauri-plugin-drag";
-
 import * as wav from "node-wav";
-import { checkFileExists, createPlaceholder, writeSampleFile } from "../../native";
-import { path } from "@tauri-apps/api";
-
+import { httpFetch } from "../../utils/httpFetch";
 import { cfg } from "../../config";
 import { SamplePlaybackContext } from "../playback";
 import { SpliceTag } from "../../splice/entities";
@@ -43,16 +37,16 @@ export default function SampleListEntry(
 
   let decodedSample: Uint8Array | null = null;
 
-  let fetchAhead: Promise<Response<ArrayBuffer>> | null = null;
+  let fetchAhead: Promise<any> | null = null;
   function startFetching() {
     if (fetchAhead != null)
       return;
 
     const file = sample.files.find(x => x.asset_file_type_slug == "preview_mp3")!;
 
-    fetchAhead = fetch<ArrayBuffer>(file.url, {
+    fetchAhead = httpFetch(file.url, {
       method: "GET",
-      responseType: ResponseType.Binary
+      responseType: 'Binary'
     });
   }
 
@@ -64,26 +58,42 @@ export default function SampleListEntry(
     setPlaying(false);
   }
 
-  async function handlePlayClick() {
-    ctx.cancellation?.();
+  async function handlePlayClick(ev?: React.MouseEvent) {
+    try {
+      // Prevent event propagation for drag
+      if (ev) {
+        ev.stopPropagation();
+      }
 
-    if (playing)
-      return;
+      // Stop any currently playing sample
+      ctx.cancellation?.();
 
-    if (audio.src == "") {
-      setFgLoading(true);
-      await ensureAudioDecoded();
+      // If already playing, just stop
+      if (playing) {
+        stop();
+        return;
+      }
+
+      // Load and play
+      if (audio.src == "") {
+        setFgLoading(true);
+        await ensureAudioDecoded();
+        setFgLoading(false);
+
+        audio.src = URL.createObjectURL(
+          new Blob([decodedSample! as any], { "type": "audio/mpeg" })
+        );
+      }
+
+      await audio.play();
+      setPlaying(true);
+
+      ctx.setCancellation(() => stop);
+    } catch (error) {
+      console.error("Error playing sample:", error);
       setFgLoading(false);
-
-      audio.src = URL.createObjectURL(
-        new Blob([decodedSample!], { "type": "audio/mpeg" })
-      );
+      setPlaying(false);
     }
-
-    audio.play();
-    setPlaying(true);
-
-    ctx.setCancellation(() => stop);
   }
 
   async function ensureAudioDecoded() {
@@ -94,21 +104,38 @@ export default function SampleListEntry(
       startFetching();
     }
 
-    const resp = await fetchAhead;
-    decodedSample = decodeSpliceAudio(new Uint8Array(resp!.data));
+    try {
+      const resp = await fetchAhead;
+      decodedSample = decodeSpliceAudio(new Uint8Array(resp!.data));
+    } catch (error) {
+      console.error("Error decoding audio:", error);
+      throw error;
+    }
   }
 
   const sanitizePath = (x: string) => x.replace(/[<>:"|?* ]/g, "_");
 
   async function handleDrag(ev: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    // Verify that the parent of the element that we began the dragging from
-    // is not explicitly marked as non-draggable (as it may be clicked etc.)
-    const dragOrigin = document.elementFromPoint(ev.clientX, ev.clientY)?.parentElement;
-    if (dragOrigin != null && dragOrigin.dataset.draggable === "false") {
-      return;
-    }
+    try {
+      // Only support drag in Tauri mode
+      if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) {
+        console.log('Drag and drop is only available in the Tauri desktop app');
+        return;
+      }
+      
+      // Verify that the parent of the element that we began the dragging from
+      // is not explicitly marked as non-draggable (as it may be clicked etc.)
+      const dragOrigin = document.elementFromPoint(ev.clientX, ev.clientY)?.parentElement;
+      if (dragOrigin != null && dragOrigin.dataset.draggable === "false") {
+        return;
+      }
 
-    const samplePath = sanitizePath(pack.name) + "/" + sanitizePath(sample.name);
+      const samplePath = sanitizePath(pack.name) + "/" + sanitizePath(sample.name);
+
+      // Import Tauri modules dynamically
+      const { path } = await import('@tauri-apps/api');
+      const { startDrag } = await import('@crabnebula/tauri-plugin-drag');
+      const { checkFileExists, createPlaceholder, writeSampleFile } = await import('../../native');
 
     const dragParams = {
       item: [await path.join(cfg().sampleDir, samplePath)],
@@ -126,7 +153,7 @@ export default function SampleListEntry(
 
       const actx = new AudioContext();
 
-      const samples = await actx.decodeAudioData(decodedSample!.buffer);
+      const samples = await actx.decodeAudioData(decodedSample!.buffer as any);
       const channels: Float32Array[] = [];
 
       if (samples.length < 60 * 44100) {
@@ -143,7 +170,7 @@ export default function SampleListEntry(
         console.warn(`big boi detected of ${samples.length} samples - not pre-processing!`);
       }
 
-      await writeSampleFile(cfg().sampleDir, samplePath, wav.encode(channels, {
+      await writeSampleFile(cfg().sampleDir, samplePath, wav.encode(channels as any, {
         bitDepth: 16,
         sampleRate: samples.sampleRate
       }));
@@ -157,46 +184,67 @@ export default function SampleListEntry(
       setFgLoading(false);
       startDrag(dragParams);
     }
+    } catch (error) {
+      console.error("Error handling drag operation:", error);
+      setFgLoading(false);
+    }
   }
 
   return (
     <div onMouseOver={startFetching}
-      className={`flex w-full px-4 py-2 gap-8 rounded transition-background
-                    items-center hover:bg-foreground-100 cursor-grab select-none`}
+      className={`card-subtle flex w-full px-6 py-5 gap-6 rounded-lg
+                    items-center hover-lift cursor-pointer select-none transition-all duration-300 group`}
     >
       { /* when loading, set the cursor for everything to a waiting icon */}
       {fgLoading && <style> {`* { cursor: wait }`} </style>}
 
       { /* sample pack */}
-      <div className="flex gap-4 min-w-20">
+      <div className="flex gap-3 min-w-24 items-center">
         <Tooltip content={
-          <div className="flex flex-col gap-2 p-4">
-            <img src={packCover} alt={pack.name} width={128} height={128}></img>
-            <h1>{pack.name}</h1>
+          <div className="flex flex-col gap-3 p-4 animate-scaleIn bg-black rounded-lg shadow-xl">
+            <img src={packCover} alt={pack.name} width={128} height={128} className="rounded-lg" />
+            <h1 className="font-semibold text-white">{pack.name}</h1>
           </div>
         }>
-          <a href={`https://splice.com/sounds/labels/${pack.permalink_base_url}`} target="_blank">
-            <img src={packCover} alt={pack.name} width={32} height={32} />
+          <a href={`https://splice.com/sounds/labels/${pack.permalink_base_url}`} target="_blank" 
+             className="hover:opacity-80 transition-all duration-300"
+             onClick={(e) => e.stopPropagation()}>
+            <img src={packCover} alt={pack.name} width={48} height={48} className="rounded-lg object-cover shadow-lg hover:scale-105 transition-transform duration-300" />
           </a>
         </Tooltip>
 
-        <div onClick={handlePlayClick} className="cursor-pointer w-8">
-          {fgLoading ? <CircularProgress aria-label="Loading sample..." className="h-8" /> : playing ? <StopIcon /> : <PlayIcon />}
-        </div>
+        <button onClick={handlePlayClick}
+             className="play-button cursor-pointer w-14 h-14 rounded-full border-2 border-gray-600 flex items-center justify-center 
+                        hover:border-white hover:bg-white/10 transition-all duration-300 backdrop-blur-sm
+                        focus:outline-none focus:ring-2 focus:ring-white/50"
+             aria-label={playing ? "Stop sample" : "Play sample"}>
+          {fgLoading ? (
+            <CircularProgress aria-label="Loading sample..." className="h-7 w-7" color="default" size="lg" />
+          ) : playing ? (
+            <StopIcon className="w-7 h-7" />
+          ) : (
+            <PlayIcon className="w-7 h-7 ml-1" />
+          )}
+        </button>
       </div>
 
       { /* sample name + tags */}
-      <div className="grow" onMouseDown={handleDrag}>
-        <div className="flex gap-1 max-w-[50vw] overflow-clip">
-          {sample.name.split("/").pop()}
-          <div className="text-foreground-400">({sample.asset_category_slug})</div>
+      <div className="grow" onMouseDown={handleDrag}
+           onClick={handlePlayClick}
+           style={{ cursor: "move" }}>
+        <div className="flex gap-3 items-center max-w-[50vw] overflow-clip group-hover:translate-x-1 transition-transform duration-300">
+          <span className="font-bold text-base group-hover:text-white transition-colors">{sample.name.split("/").pop()}</span>
+          <span className="text-gray-400 text-xs px-3 py-1 bg-gray-800 rounded-full">{sample.asset_category_slug}</span>
         </div>
 
-        <div className="flex gap-1">{sample.tags.map(x => (
+        <div className="flex gap-2 mt-3 flex-wrap">{sample.tags.map(x => (
           <Chip key={x.uuid}
-            size="sm" style={{ cursor: "pointer" }}
-            onClick={() => onTagClick(x)}
+            size="sm" 
+            style={{ cursor: "pointer" }}
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); onTagClick(x); }}
             data-draggable="false"
+            className="transition-all duration-300 hover:bg-white/20 hover:scale-105"
+            variant="flat"
           >
             {x.label}
           </Chip>
@@ -204,25 +252,33 @@ export default function SampleListEntry(
       </div>
 
       { /* other metadata */}
-      <div className="flex gap-8" onMouseDown={handleDrag}>
-        {sample.key != null ?
-          <div className="flex items-center gap-2 font-semibold text-foreground-500">
-            <MusicalNoteIcon className="w-4" />
-            <span>{`${sample.key.toUpperCase()}${getChordTypeDisplay(sample.chord_type)}`}</span>
+      <div className="flex gap-4 items-center" onMouseDown={handleDrag}
+           onClick={handlePlayClick}
+           style={{ cursor: "move" }}>
+        {sample.key != null &&
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-800/50 border border-gray-700/50 
+                         backdrop-blur-sm group-hover:bg-gray-700/50 group-hover:border-gray-600 
+                         transition-all duration-300">
+            <MusicalNoteIcon className="w-4 h-4 text-gray-300" />
+            <span className="text-sm font-semibold">{`${sample.key.toUpperCase()}${getChordTypeDisplay(sample.chord_type)}`}</span>
           </div>
-          : <></>}
+        }
 
-        <div className="flex items-center gap-2 font-semibold text-foreground-500">
-          <ClockCircleLinearIcon />
-          <span>{`${(sample.duration / 1000).toFixed(2)}s`}</span>
+        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-800/50 border border-gray-700/50 
+                       backdrop-blur-sm group-hover:bg-gray-700/50 group-hover:border-gray-600 
+                       transition-all duration-300">
+          <ClockCircleLinearIcon className="w-4 h-4 text-gray-300" />
+          <span className="text-sm font-semibold">{`${(sample.duration / 1000).toFixed(2)}s`}</span>
         </div>
 
-        {sample.bpm != null ?
-          <div className="flex items-center gap-2 font-semibold text-foreground-500">
-            <ClockSquareBoldIcon />
-            <span>{`${sample.bpm} BPM`}</span>
+        {sample.bpm != null &&
+          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-800/50 border border-gray-700/50 
+                         backdrop-blur-sm group-hover:bg-gray-700/50 group-hover:border-gray-600 
+                         transition-all duration-300">
+            <ClockSquareBoldIcon className="w-4 h-4 text-gray-300" />
+            <span className="text-sm font-semibold">{`${sample.bpm} BPM`}</span>
           </div>
-          : <></>}
+        }
       </div>
     </div>
   );

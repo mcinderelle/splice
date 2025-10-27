@@ -23,5 +23,21 @@ export default defineConfig(async () => ({
       // 3. tell vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    proxy: {
+      // Proxy GraphQL requests to bypass CORS in browser mode
+      '/graphql': {
+        target: 'https://surfaces-graphql.splice.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path
+      },
+      // Proxy audio samples from S3 to bypass CORS
+      '/audio_samples': {
+        target: 'https://spliceproduction.s3.us-west-1.amazonaws.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path
+      }
+    }
   },
 }));

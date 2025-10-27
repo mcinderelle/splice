@@ -11,9 +11,42 @@
 export async function httpFetch(url: string, options: any): Promise<any> {
   // Check if we're in Tauri environment
   if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
-    // Dynamic import for Tauri fetch
-    const { fetch } = await import('@tauri-apps/api/http');
-    return await fetch(url, options);
+    // Use Tauri's HTTP client
+    const { getClient } = await import('@tauri-apps/api/http');
+    
+    try {
+      const client = await getClient({
+        maxRedirections: 5
+      });
+      
+      const response = await client.request<any>({
+        url: url,
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        body: options.body ? {
+          type: 'Json',
+          payload: options.body
+        } : undefined,
+        responseType: options.responseType === 'Binary' ? 0 as any : 1 as any // 0 = Binary, 1 = Text/JSON
+      });
+      
+      // Handle binary response
+      if (options.responseType === 'Binary') {
+        return {
+          data: response.data
+        };
+      }
+      
+      // Parse the text response as JSON
+      const parsedData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+      
+      return {
+        data: parsedData
+      };
+    } catch (error) {
+      console.error(`Tauri HTTP error for ${url}:`, error);
+      throw error;
+    }
   }
   
   // Browser fallback - use proxy to bypass CORS

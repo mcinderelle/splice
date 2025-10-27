@@ -12,13 +12,15 @@
 - ⌨️ Keyboard shortcuts for rapid workflow
 - 🎨 Buttery smooth liquid animations
 - 🎤 One-click play/pause for samples
+- 🌍 Cross-platform support (Windows, macOS, Linux)
 
 ## 🎹 Keyboard Shortcuts
 
+- **/** - Focus search bar
+- **Esc** - Clear search  
 - **Space** - Play/Pause current sample
-- **Ctrl+K** (or Cmd+K) - Focus search bar
-- **Esc** - Clear search
-- **Ctrl+/** (or Cmd+/) - Open settings
+- **H** - Open help
+- **Ctrl+,** (or Cmd+, on Mac) - Open settings
 
 ## 🚀 Quick Start
 

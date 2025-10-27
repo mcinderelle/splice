@@ -53,7 +53,7 @@ export default function HelpModal({
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <ShortcutItem 
-                  keys={["Ctrl", "K"]}
+                  keys={["/"]}
                   description="Focus search bar"
                 />
                 <ShortcutItem 
@@ -65,16 +65,12 @@ export default function HelpModal({
                   description="Play/Pause current sample"
                 />
                 <ShortcutItem 
-                  keys={["Ctrl", "/"]}
+                  keys={["Ctrl", ","]}
                   description="Open settings"
                 />
                 <ShortcutItem 
                   keys={["H"]}
                   description="Open help"
-                />
-                <ShortcutItem 
-                  keys={["Ctrl", "H"]}
-                  description="Toggle help modal"
                 />
               </div>
             </div>

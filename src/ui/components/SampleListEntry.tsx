@@ -113,7 +113,9 @@ export default function SampleListEntry(
     }
   }
 
-  const sanitizePath = (x: string) => x.replace(/[<>:"|?* ]/g, "_");
+  // Cross-platform filename sanitization
+  // Removes invalid characters for Windows, Linux, and macOS
+  const sanitizePath = (x: string) => x.replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/[^\x20-\x7E]/g, "_");
 
   async function handleDrag(ev: React.MouseEvent<HTMLDivElement, MouseEvent>) {
     try {

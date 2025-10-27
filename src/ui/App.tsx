@@ -85,16 +85,16 @@ function App() {
         setQuery("");
       }
       
-      // Ctrl/Cmd + K to focus search
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      // / to focus search
+      if (e.key === '/' && !isTyping) {
         e.preventDefault();
         const searchInput = document.querySelector('input[aria-label="Search for samples"]') as HTMLInputElement;
         searchInput?.focus();
         searchInput?.select();
       }
       
-      // Ctrl/Cmd + / to open settings
-      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      // Ctrl/Cmd + , to open settings
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         settings.onOpen();
       }
@@ -256,7 +256,7 @@ function App() {
         <Input
             type="text"
             aria-label="Search for samples"
-            placeholder="Search for samples... (Ctrl+K to focus)"
+            placeholder="Search for samples... (Press / to focus)"
             labelPlacement="outside"
             variant="bordered"
             value={query}
@@ -451,7 +451,7 @@ function App() {
                 <p className="font-medium text-gray-400 text-sm mb-2">Keyboard shortcuts:</p>
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div className="flex items-center gap-2">
-                    <kbd className="px-2 py-1 bg-gray-800 rounded font-mono">Ctrl+K</kbd>
+                    <kbd className="px-2 py-1 bg-gray-800 rounded font-mono">/</kbd>
                     <span className="text-gray-400">Focus search</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -463,7 +463,7 @@ function App() {
                     <span className="text-gray-400">Play/Pause</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <kbd className="px-2 py-1 bg-gray-800 rounded font-mono">Ctrl+/</kbd>
+                    <kbd className="px-2 py-1 bg-gray-800 rounded font-mono">Ctrl+,</kbd>
                     <span className="text-gray-400">Open settings</span>
                   </div>
                 </div>

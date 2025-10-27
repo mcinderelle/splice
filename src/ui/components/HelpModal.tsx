@@ -1,8 +1,7 @@
 import { Modal, ModalContent, ModalHeader, ModalBody } from "@nextui-org/react";
 import { 
   QuestionMarkCircleIcon,
-  KeyboardIcon,
-  SparklesIcon 
+  CommandLineIcon
 } from "@heroicons/react/20/solid";
 
 export default function HelpModal({ 
@@ -49,7 +48,7 @@ export default function HelpModal({
             {/* Keyboard Shortcuts */}
             <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
               <div className="flex items-center gap-2 mb-4">
-                <KeyboardIcon className="w-5 h-5 text-purple-400" />
+                <CommandLineIcon className="w-5 h-5 text-purple-400" />
                 <h3 className="font-semibold text-lg">Keyboard Shortcuts</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -81,9 +80,9 @@ export default function HelpModal({
             </div>
 
             {/* Features */}
-            <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+              <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
               <div className="flex items-center gap-2 mb-4">
-                <SparklesIcon className="w-5 h-5 text-blue-400" />
+                <CommandLineIcon className="w-5 h-5 text-blue-400" />
                 <h3 className="font-semibold text-lg">Features</h3>
               </div>
               <div className="space-y-3 text-sm text-gray-400">

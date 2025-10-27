@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, CircularProgress, Input, Modal, Pagination, Popover, PopoverContent, PopoverTrigger, Radio, RadioGroup, Select, SelectItem, useDisclosure } from "@nextui-org/react";
 import { SearchIcon, ChevronDownIcon } from '@nextui-org/shared-icons'
-import { WrenchIcon } from "@heroicons/react/20/solid";
+import { WrenchIcon, QuestionMarkCircleIcon } from "@heroicons/react/20/solid";
 import { cfg } from "../config";
 import { GRAPHQL_URL, SpliceSample, createSearchRequest } from "../splice/api";
 import { ChordType, MusicKey, SpliceSampleType, SpliceSortBy, SpliceTag } from "../splice/entities";
@@ -9,12 +9,15 @@ import { httpFetch } from "../utils/httpFetch";
 import SampleListEntry from "./components/SampleListEntry";
 import SettingsModalContent from "./components/SettingsModalContent";
 import KeyScaleSelection from "./components/KeyScaleSelection";
+import HelpModal from "./components/HelpModal";
 import { SamplePlaybackCancellation, SamplePlaybackContext } from "./playback";
 
 function App() {
   const settings = useDisclosure({
     defaultOpen: !cfg().configured
   });
+  
+  const help = useDisclosure();
 
   const [bpmType, setBpmType] = useState<"exact" | "range">("exact");
   const [bpm, setBpm] = useState<{
@@ -95,11 +98,17 @@ function App() {
         e.preventDefault();
         settings.onOpen();
       }
+      
+      // H to open help
+      if (e.key === 'h' && !isTyping) {
+        e.preventDefault();
+        help.onOpen();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pbCtx, settings, setQuery]);
+  }, [pbCtx, settings, help, setQuery]);
 
   function ensureContraintsGathered() {
     if (knownInstruments.length == 0 || knownGenres.length == 0) {
@@ -226,11 +235,11 @@ function App() {
             <div>Samples & Sounds</div>
           </div>
         </div>
-        <div className="text-xs text-gray-400">
-          <span className="font-medium text-gray-300">By</span>
-          <a href="https://github.com/mayukhjit" target="_blank" rel="noopener noreferrer" 
-             className="ml-2 font-semibold hover:text-white transition-colors underline">
-            Mayukhjit Chakraborty
+        <div className="text-xs text-gray-400 flex items-center gap-2">
+          <span className="font-medium text-gray-300">Made without AI by</span>
+          <a href="https://github.com/mcinderelle" target="_blank" rel="noopener noreferrer" 
+             className="font-semibold hover:text-white transition-colors underline">
+            @mcinderelle
           </a>
         </div>
       </div>
@@ -240,6 +249,8 @@ function App() {
       >
         <SettingsModalContent/>
       </Modal>
+
+      <HelpModal isOpen={help.isOpen} onClose={help.onClose}/>
 
       <div className="flex gap-3 animate-slideIn" style={{ animationDelay: '0.1s' }}>
         <Input
@@ -269,11 +280,19 @@ function App() {
             <SelectItem key="random">Random</SelectItem>
         </Select>
 
-        <Button isIconOnly variant="bordered" aria-label="Settings" 
-                onClick={settings.onOpen}
-                className="hover-lift">
-          <WrenchIcon className="w-5" />
-        </Button>
+        <div className="flex gap-2">
+          <Button isIconOnly variant="bordered" aria-label="Help" 
+                  onClick={help.onOpen}
+                  className="hover-lift">
+            <QuestionMarkCircleIcon className="w-5" />
+          </Button>
+          
+          <Button isIconOnly variant="bordered" aria-label="Settings" 
+                  onClick={settings.onOpen}
+                  className="hover-lift">
+            <WrenchIcon className="w-5" />
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">

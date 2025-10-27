@@ -52,4 +52,4 @@ npm run tauri dev
   <img src="./etc/screenshot.png" width="800">
 </p>
 
-**Developed by [Mayukhjit Chakraborty](https://github.com/mayukhjit)**
+**Developed by [@mcinderelle](https://github.com/mcinderelle) - Made without AI**

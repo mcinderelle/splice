@@ -222,11 +222,20 @@ body {
   opacity: 1;
 }
 
-/* Smooth transform animations */
-* {
+/* Prefer opt-in transitions instead of global catch-all for better performance */
+.transition-smooth {
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
               opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+              background-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn, .animate-slideIn, .animate-scaleIn, .animate-smooth-fadeIn, .animate-slideInUp, .animate-slideInDown, .animate-liquidFloat, .animate-ripple, .pulse, .loading-shimmer, .hover-lift, .play-button, .transition-smooth {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 /* Play button animation */
@@ -240,6 +249,16 @@ body {
 
 .play-button:active {
   transform: scale(0.95);
+}
+
+/* Unified tooltip panel styling */
+.tooltip-panel {
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  border-radius: 0.5rem;
 }
 
 /* Pulse animation */

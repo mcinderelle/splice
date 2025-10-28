@@ -43,16 +43,46 @@ function SampleListEntryBase(
   const fetchAheadRef = useRef<Promise<any> | null>(null);
   const lastErrorLoggedSrcRef = useRef<string | null>(null);
 
+  // WebAudio for sample-accurate looping
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const waSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const waStartTimeRef = useRef<number>(0);
+  const waOffsetRef = useRef<number>(0);
+  const waDurationRef = useRef<number>(0);
+  const waRafRef = useRef<number | null>(null);
+
   const { notify } = useToast();
   const [playbackRate, setPlaybackRate] = useState(1);
   const [semitones, setSemitones] = useState(0);
   const effectiveRate = playbackRate * Math.pow(2, semitones / 12);
   const [isFav, setIsFav] = useState(() => localStorage.getItem(`fav:${sample.uuid}`) === '1');
 
+  // Ensure we always pass a real ArrayBuffer (not SharedArrayBuffer) to WebAudio APIs
+  function materializeArrayBuffer(input: Uint8Array | ArrayBuffer): ArrayBuffer {
+    if (input instanceof ArrayBuffer) return input;
+    // Uint8Array#slice copies into a new ArrayBuffer
+    return input.slice().buffer;
+  }
+
   const pack = sample.parents?.items?.[0] ?? { name: 'Unknown pack', permalink_base_url: '', files: [] } as any;
   const packCover = (pack.files?.find((x: any) => x.asset_file_type_slug == "cover_image")?.url) || "img/missing-cover.png";
   const isLoop = sample.asset_category_slug === 'loop';
   const displayName = (sample.name && sample.name.split('/').pop()) || sample.name || 'Unknown sample';
+  const highlightQuery = (text: string, q: string) => {
+    try {
+      const query = (q || '').trim();
+      if (!query) return text;
+      const idx = text.toLowerCase().indexOf(query.toLowerCase());
+      if (idx === -1) return text;
+      return (
+        <>
+          {text.slice(0, idx)}
+          <mark className="bg-yellow-600/40 text-yellow-200 rounded px-0.5">{text.slice(idx, idx + query.length)}</mark>
+          {text.slice(idx + query.length)}
+        </>
+      );
+    } catch { return text; }
+  };
   const coverSize = compact ? 104 : 144;
   function startFetching() {
     if (fetchAheadRef.current != null)
@@ -88,8 +118,8 @@ function SampleListEntryBase(
       (audio as any).webkitPreservesPitch = cfg().preservePitch;
     } catch {}
     
-    // Enable native gapless looping for loop samples
-    audio.loop = sample.asset_category_slug === 'loop';
+    // Enable native gapless looping for non-WebAudio path (one-shots)
+    audio.loop = sample.asset_category_slug === 'loop' ? false : false;
     
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
@@ -159,6 +189,16 @@ function SampleListEntryBase(
   }, []);
 
   function stop() {
+    try {
+      if (waSourceRef.current) {
+        waSourceRef.current.onended = null as any;
+        try { waSourceRef.current.stop(); } catch {}
+        waSourceRef.current.disconnect();
+      }
+      waSourceRef.current = null;
+      if (waRafRef.current != null) cancelAnimationFrame(waRafRef.current);
+      waRafRef.current = null;
+    } catch {}
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -253,7 +293,7 @@ function SampleListEntryBase(
 
       const audio = audioRef.current;
 
-      // Load and play
+      // Load and prepare source
       if (!blobUrlRef.current || audio.src == "") {
         // Only show loading if not already decoded
         const needsDecoding = decodedSampleRef.current == null;
@@ -286,7 +326,7 @@ function SampleListEntryBase(
         const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         blobUrlRef.current = URL.createObjectURL(blob);
 
-        // Set audio source
+        // Set audio source for waveform/one-shot fallback
         audio.src = blobUrlRef.current;
         // Allow a single error log for this new src
         lastErrorLoggedSrcRef.current = null;
@@ -344,18 +384,91 @@ function SampleListEntryBase(
         setFgLoading(false);
       }
 
-      try {
-        await audio.play();
-      } catch (err) {
-        console.error('Failed to start audio:', err);
-        setErrorMessage('Failed to start audio');
-        notify('error', 'Failed to start audio');
-        setFgLoading(false);
-        setPlaying(false);
-        return;
+      // Choose playback engine
+      if (isLoop) {
+        try {
+          // Ensure AudioContext
+          if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+          const actx = audioCtxRef.current;
+          // Decode into AudioBuffer
+          const audioBuffer = await actx.decodeAudioData(materializeArrayBuffer(decodedSampleRef.current as Uint8Array));
+          waDurationRef.current = audioBuffer.duration;
+
+          // Compute loop points if COSO metadata present
+          const meta: any = (sample as any).coso_playback_metadata || {};
+          const bpm = meta.playbackBpm || sample.bpm || 0;
+          const numBars = meta.numBars || null;
+          const psOffset = meta.psOffset || 0; // preview start offset (seconds)
+          let loopStart = Math.max(0, (psOffset || 0));
+          let loopEnd = audioBuffer.duration;
+          if (bpm && numBars) {
+            const secondsPerBeat = 60 / bpm;
+            const beatsPerBar = 4; // assume 4/4
+            const loopDur = secondsPerBeat * beatsPerBar * numBars;
+            loopEnd = Math.min(audioBuffer.duration, loopStart + loopDur);
+          }
+
+          // Clean previous source
+          if (waSourceRef.current) {
+            try { waSourceRef.current.stop(); } catch {}
+            try { waSourceRef.current.disconnect(); } catch {}
+          }
+
+          const source = actx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.loop = true;
+          source.loopStart = Math.max(0, Math.min(loopStart, audioBuffer.duration - 0.01));
+          source.loopEnd = Math.max(source.loopStart + 0.01, Math.min(loopEnd, audioBuffer.duration));
+          source.playbackRate.value = playbackRate * Math.pow(2, semitones / 12);
+          source.connect(actx.destination);
+
+          waSourceRef.current = source;
+          waOffsetRef.current = 0;
+          waStartTimeRef.current = actx.currentTime;
+          source.start(0, source.loopStart);
+
+          // Drive currentTime updates for UI and waveform
+          const tick = () => {
+            const act = audioCtxRef.current;
+            if (!act || !waSourceRef.current) return;
+            const t = ((act.currentTime - waStartTimeRef.current) + source.loopStart) % (source.loopEnd - source.loopStart);
+            setCurrentTime(t);
+            setDuration(source.loopEnd - source.loopStart);
+            waRafRef.current = requestAnimationFrame(tick);
+          };
+          if (waRafRef.current != null) cancelAnimationFrame(waRafRef.current);
+          waRafRef.current = requestAnimationFrame(tick);
+
+          setPlaying(true);
+          setErrorMessage(null);
+        } catch (err) {
+          console.error('Failed WebAudio loop playback, falling back:', err);
+          try {
+            await audio.play();
+            setPlaying(true);
+            setErrorMessage(null);
+          } catch (e2) {
+            setErrorMessage('Failed to start audio');
+            notify('error', 'Failed to start audio');
+            setFgLoading(false);
+            setPlaying(false);
+            return;
+          }
+        }
+      } else {
+        try {
+          await audio.play();
+          setPlaying(true);
+          setErrorMessage(null);
+        } catch (err) {
+          console.error('Failed to start audio:', err);
+          setErrorMessage('Failed to start audio');
+          notify('error', 'Failed to start audio');
+          setFgLoading(false);
+          setPlaying(false);
+          return;
+        }
       }
-      setPlaying(true);
-      setErrorMessage(null);
 
       // Already registered above; keep state consistent
     } catch (error) {
@@ -457,7 +570,7 @@ function SampleListEntryBase(
     if (decodedSampleRef.current) {
       try {
         const actx = new AudioContext();
-        const decodePromise = actx.decodeAudioData(decodedSampleRef.current.buffer as any);
+        const decodePromise = actx.decodeAudioData(materializeArrayBuffer(decodedSampleRef.current as Uint8Array));
         decodePromise.then((samples) => {
           const channels: Float32Array[] = [];
           for (let i = 0; i < samples.numberOfChannels; i++) {
@@ -588,13 +701,13 @@ function SampleListEntryBase(
         <Tooltip
           showArrow
           placement="right"
-          delay={250}
+          delay={200}
           content={
           <a href={pack?.permalink_base_url ? `https://splice.com/sounds/labels/${pack.permalink_base_url}` : '#'} target="_blank" rel="noopener noreferrer"
-             className="flex flex-col gap-3 p-4 animate-scaleIn bg-black/80 rounded-lg shadow-xl border border-white/10 hover:bg-black/70">
+             className="flex flex-col gap-3 p-4 animate-scaleIn tooltip-panel hover:bg-black/70 transition-smooth">
             <img src={packCover} alt={pack.name} width={128} height={128} className="rounded-lg" />
             <h1 className="font-semibold text-white">{pack.name}</h1>
-            <div className="text-xs text-gray-300 flex gap-3 flex-wrap">
+            <div className="text-xs text-gray-300 grid grid-cols-2 gap-x-4 gap-y-1">
               {sample.key && <span>Key: <b>{sample.key.toUpperCase()}</b></span>}
               {sample.bpm && <span>BPM: <b>{sample.bpm}</b></span>}
               {sample.bpm && <span>Preview BPM: <b>{(sample.bpm * effectiveRate).toFixed(1)}</b></span>}
@@ -653,7 +766,7 @@ function SampleListEntryBase(
             className="font-bold text-[15px] text-white group-hover:text-white transition-colors truncate underline-offset-2 hover:underline flex-1 min-w-0 pr-2"
             title={displayName}
           >
-            {displayName || 'Unknown sample'}
+            {highlightQuery(displayName || 'Unknown sample', (document.querySelector('input[aria-label="Search for samples"]') as HTMLInputElement)?.value || '')}
           </a>
           <span
             title={isLoop ? 'Loop' : 'One‑shot'}
@@ -804,21 +917,56 @@ function SampleListEntryBase(
                 const target = Math.max(0, Math.min(dur - 0.001, t));
                 // Ensure exclusive playback when seeking
                 try { pbExclusiveStopOthers(); } catch {}
-                // If metadata still not ready, wait
-                if (!isFinite(audioRef.current.duration) || audioRef.current.duration === 0) {
-                  await new Promise<void>((resolve) => {
-                    const onLoaded = () => { audioRef.current?.removeEventListener('loadedmetadata', onLoaded); resolve(); };
-                    audioRef.current?.addEventListener('loadedmetadata', onLoaded, { once: true });
-                  });
+
+                if (isLoop && audioCtxRef.current && decodedSampleRef.current) {
+                  // Restart WebAudio source at offset within loop window
+                  try {
+                    const actx = audioCtxRef.current;
+                    const buf = await actx.decodeAudioData(materializeArrayBuffer(decodedSampleRef.current as Uint8Array));
+                    const meta: any = (sample as any).coso_playback_metadata || {};
+                    const bpm = meta.playbackBpm || sample.bpm || 0;
+                    const numBars = meta.numBars || null;
+                    const psOffset = meta.psOffset || 0;
+                    let loopStart = Math.max(0, (psOffset || 0));
+                    let loopEnd = buf.duration;
+                    if (bpm && numBars) {
+                      const secondsPerBeat = 60 / bpm;
+                      const beatsPerBar = 4;
+                      const loopDur = secondsPerBeat * beatsPerBar * numBars;
+                      loopEnd = Math.min(buf.duration, loopStart + loopDur);
+                    }
+
+                    if (waSourceRef.current) { try { waSourceRef.current.stop(); } catch {} try { waSourceRef.current.disconnect(); } catch {} }
+                    const src = actx.createBufferSource();
+                    src.buffer = buf;
+                    src.loop = true;
+                    src.loopStart = Math.max(0, Math.min(loopStart, buf.duration - 0.01));
+                    src.loopEnd = Math.max(src.loopStart + 0.01, Math.min(loopEnd, buf.duration));
+                    src.playbackRate.value = playbackRate * Math.pow(2, semitones / 12);
+                    src.connect(actx.destination);
+                    waSourceRef.current = src;
+                    waStartTimeRef.current = actx.currentTime;
+                    const offset = src.loopStart + (target % (src.loopEnd - src.loopStart));
+                    src.start(0, offset);
+                    setPlaying(true);
+                    setErrorMessage(null);
+                  } catch {}
+                } else {
+                  // HTMLAudio fallback
+                  if (!isFinite(audioRef.current.duration) || audioRef.current.duration === 0) {
+                    await new Promise<void>((resolve) => {
+                      const onLoaded = () => { audioRef.current?.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+                      audioRef.current?.addEventListener('loadedmetadata', onLoaded, { once: true });
+                    });
+                  }
+                  audioRef.current.currentTime = target;
+                  setCurrentTime(target);
+                  try {
+                    await audioRef.current.play();
+                    setPlaying(true);
+                    setErrorMessage(null);
+                  } catch {}
                 }
-                audioRef.current.currentTime = target;
-                setCurrentTime(target);
-                // Always start playback from the clicked position
-                try {
-                  await audioRef.current.play();
-                  setPlaying(true);
-                  setErrorMessage(null);
-                } catch {}
               } catch {}
             }}
           />
@@ -840,7 +988,7 @@ function SampleListEntryBase(
                   setFgLoading(true);
                   await ensureAudioDecoded();
                   const actx = new AudioContext();
-                  const samples = await actx.decodeAudioData(decodedSampleRef.current!.buffer as any);
+                  const samples = await actx.decodeAudioData(materializeArrayBuffer(decodedSampleRef.current as Uint8Array));
                   const channels: Float32Array[] = [];
                   for (let i = 0; i < samples.numberOfChannels; i++) channels.push(samples.getChannelData(i));
                   const wavBuffer = wav.encode(channels as any, { bitDepth: 16, sampleRate: samples.sampleRate });

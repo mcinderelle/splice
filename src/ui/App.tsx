@@ -94,6 +94,14 @@ function App() {
   const [sortOpenSticky, setSortOpenSticky] = useState(false);
   const [sampleTypeOpen, setSampleTypeOpen] = useState(false);
 
+  // Runtime indicator (Web vs Desktop)
+  const [runtimeEnv, setRuntimeEnv] = useState<'Web' | 'Desktop'>('Web');
+  useEffect(() => {
+    try {
+      setRuntimeEnv((window as any).__TAURI__ ? 'Desktop' : 'Web');
+    } catch {}
+  }, []);
+
   // Inline SVG badge for instruments (unique shapes + colors)
   const toTitle = (s: string) => s.replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 
@@ -448,15 +456,45 @@ function App() {
         if (seq !== latestSearchSeq.current) return;
         const data = (resp as HttpFetchJsonResult<SpliceSearchResponse>).data.data.assetsSearch;
 
-        // Client-side exact-match boost: move exact name matches to top
+        // Client-side fuzzy boost and startsWith priority
         const ql = q.toLowerCase();
-        const boosted = [...data.items].sort((a: any, b: any) => {
-          const an = (a.name.split('/').pop() || '').toLowerCase();
-          const bn = (b.name.split('/').pop() || '').toLowerCase();
-          const ae = an === ql ? 1 : (an.includes(ql) ? 0.5 : 0);
-          const be = bn === ql ? 1 : (bn.includes(ql) ? 0.5 : 0);
-          return be - ae;
-        });
+        const score = (name: string) => {
+          const base = (name.split('/').pop() || '').toLowerCase();
+          if (!ql) return 0;
+          let s = 0;
+          if (base === ql) s += 100;
+          if (base.startsWith(ql)) s += 25;
+          if (base.includes(ql)) s += 12;
+          // token hits
+          const tokens = ql.split(/\s+/).filter(Boolean);
+          for (const t of tokens) if (base.includes(t)) s += 4;
+          // small edit distance bonus
+          const dist = (a: string, b: string) => {
+            const m = a.length, n = b.length;
+            if (Math.abs(m - n) > 2) return 99;
+            const dp = Array(n + 1).fill(0).map((_: any, i: number) => i);
+            let prev = 0;
+            for (let i = 1; i <= m; i++) {
+              let curr = i;
+              prev = i - 1;
+              for (let j = 1; j <= n; j++) {
+                const ins = dp[j] + 1;
+                const del = curr + 1;
+                const sub = dp[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+                const next = Math.min(ins, del, sub);
+                dp[j - 1] = prev;
+                prev = next;
+                curr = next;
+              }
+              dp[n] = curr;
+            }
+            return dp[n];
+          };
+          const d = dist(base.slice(0, Math.min(base.length, 32)), ql.slice(0, 32));
+          if (d <= 2) s += (3 - d);
+          return s;
+        };
+        const boosted = [...data.items].sort((a: any, b: any) => score(b.name) - score(a.name));
         setResults(boosted);
         setResultCount(data.response_metadata.records);
 
@@ -497,6 +535,9 @@ function App() {
           </div>
         </div>
         <div className="text-xs text-gray-400 flex items-center gap-2">
+          <span className={`px-2 py-0.5 rounded-full border ${runtimeEnv === 'Desktop' ? 'bg-emerald-900/30 border-emerald-700/40 text-emerald-300' : 'bg-sky-900/30 border-sky-700/40 text-sky-300'}`} title={runtimeEnv === 'Desktop' ? 'Running as Desktop app (Tauri)' : 'Running in Web browser'}>
+            {runtimeEnv}
+          </span>
           <span className="font-medium text-gray-300">Made without AI by</span>
           <a href="https://github.com/mcinderelle" target="_blank" rel="noopener noreferrer" 
              className="font-semibold hover:text-white transition-colors underline">
@@ -508,12 +549,14 @@ function App() {
       <Modal size="3xl" isDismissable={false} hideCloseButton={!cfg().configured}
             isOpen={settings.isOpen} onOpenChange={settings.onOpenChange}
       >
-        <SettingsModalContent/>
+        <div className="card p-3 md:p-4">
+          <SettingsModalContent/>
+        </div>
       </Modal>
 
       <HelpModal isOpen={help.isOpen} onClose={help.onClose}/>
 
-      <div className="flex gap-3 items-start animate-slideIn" style={{ animationDelay: '0.1s' }}>
+      <div className="flex gap-3 items-start animate-slideIn transition-smooth" style={{ animationDelay: '0.1s' }}>
         <Input
             type="text"
             aria-label="Search for samples"
@@ -535,7 +578,7 @@ function App() {
                 <div className="text-[10px] text-gray-500 pr-1 whitespace-nowrap flex items-center gap-1"><span>Press</span><kbd className="px-1 py-0.5 bg-gray-800 rounded border border-gray-700">Enter</kbd></div>
               )
             }
-            className="w-full max-w-2xl"
+            className="w-full max-w-[1200px]"
           />
 
         <Popover placement="bottom" showArrow isOpen={sortOpenTop} onOpenChange={(open)=>setSortOpenTop(!!open)}>
@@ -544,7 +587,7 @@ function App() {
               { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="p-2 w-56">
+          <PopoverContent className="p-2 w-56 tooltip-panel transition-smooth">
             <div className="flex flex-col">
               <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('relevance'); setSortOpenTop(false); }}>Most relevant</button>
               <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('popularity'); setSortOpenTop(false); }}>Most popular</button>
@@ -598,7 +641,7 @@ function App() {
       <div className="flex gap-4 min-h-0 flex-1">
         {/* left sidebar filters */}
         {sidebarOpen && (
-        <aside className="w-72 xl:w-80 shrink-0 sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto card p-4 rounded-lg pb-6">
+        <aside className="w-72 xl:w-80 shrink-0 sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto card p-4 rounded-lg pb-6 transition-smooth">
           <div className="text-xs uppercase tracking-wide text-gray-400 mb-3">Filters</div>
           <div className="space-y-4 text-sm">
             <div className="flex flex-col gap-2">
@@ -688,7 +731,7 @@ function App() {
                 <PopoverTrigger>
                   <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setInstOpen(true); }}>Instruments</Button>
                 </PopoverTrigger>
-                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50 tooltip-panel transition-smooth">
                   <div className="flex flex-col gap-2">
                     { knownInstruments.length === 0 ? (
                       <div className="text-xs text-gray-400">No instruments yet. Type a query or click again to refresh.</div>
@@ -712,7 +755,7 @@ function App() {
                 <PopoverTrigger>
                   <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setGenresOpen(true); }}>Genres</Button>
                 </PopoverTrigger>
-                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50 tooltip-panel transition-smooth">
                   <div className="grid grid-cols-1 gap-2">
                     { knownGenres.length === 0 ? (
                       <div className="text-xs text-gray-400">No genres yet. Type a query or click again to refresh.</div>
@@ -735,7 +778,7 @@ function App() {
                 <PopoverTrigger>
                   <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setTagsOpen(true); }}>Tags</Button>
                 </PopoverTrigger>
-                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50 tooltip-panel transition-smooth">
                   <div className="grid grid-cols-1 gap-2">
                     { (knownTags.length ? knownTags : Array.from(tags)).length === 0 ? (
                       <div className="text-xs text-gray-400">No tags yet. Type a query or click again to refresh.</div>
@@ -765,7 +808,7 @@ function App() {
                       }
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="flex p-8 animate-scaleIn z-20">
+                  <PopoverContent className="flex p-8 animate-scaleIn z-20 tooltip-panel transition-smooth">
                     <KeyScaleSelection
                       onChordSet={(c)=>{ setChordType(c); setKeyPopOpen(false); }} onKeySet={(k)=>{ setMusicKey(k); setKeyPopOpen(false); }}
                       selectedChord={chordType} selectedKey={musicKey}
@@ -779,7 +822,7 @@ function App() {
                       { sampleType === 'any' ? 'Any' : sampleType === 'oneshot' ? 'One-Shots' : 'Loops' }
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="p-2 w-40">
+                  <PopoverContent className="p-2 w-40 tooltip-panel transition-smooth">
                     <div className="flex flex-col">
                       <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSampleType('any' as any); setSampleTypeOpen(false); }}>Any</button>
                       <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSampleType('oneshot'); setSampleTypeOpen(false); }}>One-Shots</button>
@@ -805,7 +848,7 @@ function App() {
             <p className="text-gray-400 text-sm">Try changing your query and filters</p>
           </div>
         : <div ref={resultContainer}
-            className="card my-4 mb-16 overflow-y-auto overflow-x-hidden rounded-lg flex flex-col min-h-0 gap-0 animate-fadeIn flex-1 max-w-full"
+            className="card my-4 mb-16 overflow-y-auto overflow-x-hidden rounded-lg flex flex-col min-h-0 gap-0 animate-fadeIn flex-1 max-w-full transition-smooth"
         >
               <div className="sticky top-0 z-10 bg-black/60 backdrop-blur supports-[backdrop-filter]:bg-black/40 border-b border-white/10 px-4 md:px-6 py-3 flex flex-wrap gap-3 justify-between items-center">
                 <div className="flex items-center gap-3 min-w-0">
@@ -840,7 +883,7 @@ function App() {
                         { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="p-2 w-52">
+                    <PopoverContent className="p-2 w-52 tooltip-panel transition-smooth">
                       <div className="flex flex-col">
                         <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('relevance'); setSortOpenSticky(false); }}>Most relevant</button>
                         <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('popularity'); setSortOpenSticky(false); }}>Most popular</button>
@@ -871,7 +914,7 @@ function App() {
                       })}
                     renderItem={(sample, index) => (
                       <div key={sample.uuid} className="pr-2" data-sample-idx={index}>
-                        <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} isSelected={selectedIndex === index} />
+                      <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} isSelected={selectedIndex === index} />
                       </div>
                     )}
                     loadMore={async () => { changePage(currentPage + 1); }}
@@ -893,7 +936,7 @@ function App() {
                       const dist = (k: string) => (k && musicKey) ? Math.min(Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0)), 12 - Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0))) : 99;
                       return dist(ka) - dist(kb);
                     })}
-                  height={600}
+                  height={(resultContainer.current?.clientHeight ?? 600) - 120}
                   itemHeight={compactMode ? 120 : 160}
                   render={(sample, index) => (
                     <div key={sample.uuid} className="pr-2" data-sample-idx={index}>

@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, CircularProgress, Input, Modal, Pagination, Popover, PopoverContent, PopoverTrigger, Radio, RadioGroup, Select, SelectItem, useDisclosure } from "@nextui-org/react";
 import { SearchIcon, ChevronDownIcon } from '@nextui-org/shared-icons'
-import { WrenchIcon, QuestionMarkCircleIcon } from "@heroicons/react/20/solid";
+import { WrenchIcon, QuestionMarkCircleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
 import { cfg } from "../config";
 import { GRAPHQL_URL, SpliceSample, createSearchRequest } from "../splice/api";
 import { ChordType, MusicKey, SpliceSampleType, SpliceSortBy, SpliceTag } from "../splice/entities";
 import { httpFetch } from "../utils/httpFetch";
+import React from "react";
 import SampleListEntry from "./components/SampleListEntry";
+import VirtualList from "./components/VirtualList";
 import SettingsModalContent from "./components/SettingsModalContent";
 import KeyScaleSelection from "./components/KeyScaleSelection";
 import HelpModal from "./components/HelpModal";
 import { SamplePlaybackCancellation, SamplePlaybackContext } from "./playback";
+import { ToastProvider } from "./toast";
+import { useDiagnostics } from "./diagnostics";
 
 function App() {
+  const diagnostics = useDiagnostics();
   const settings = useDisclosure({
     defaultOpen: !cfg().configured
   });
@@ -51,20 +56,123 @@ function App() {
   const [currentPage, setCurrentPage] = useState(0);
 
   const [searchLoading, setSearchLoading] = useState(false);
+  const [netStatus, setNetStatus] = useState<string | null>(null);
+  const latestSearchSeq = useRef(0);
+  const [compactMode, setCompactMode] = useState(false);
+  const [hoverAudition, setHoverAudition] = useState(false);
+  const [hoverDelayMs, setHoverDelayMs] = useState(150);
+  const [autoPlayOnNavigate, setAutoPlayOnNavigate] = useState(false);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [waveformWidth, setWaveformWidth] = useState(520);
+  const [minDuration, setMinDuration] = useState(0);
+  const [maxDuration, setMaxDuration] = useState(30);
+  const [minBpm, setMinBpm] = useState(0);
+  const [maxBpm, setMaxBpm] = useState(999);
+  const [sortKeyProximity, setSortKeyProximity] = useState(false);
 
+  useEffect(() => {
+    const onRetry = (e: any) => setNetStatus(`Retrying… (${e?.detail?.attempt})`);
+    const onSuccess = () => setNetStatus(null);
+    const onError = (e: any) => {
+      setNetStatus('Network error');
+      diagnostics.record('Network error', e?.detail);
+    };
+    window.addEventListener('httpFetch:retry', onRetry as any);
+    window.addEventListener('httpFetch:success', onSuccess as any);
+    window.addEventListener('httpFetch:error', onError as any);
+    return () => {
+      window.removeEventListener('httpFetch:retry', onRetry as any);
+      window.removeEventListener('httpFetch:success', onSuccess as any);
+      window.removeEventListener('httpFetch:error', onError as any);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!netStatus) return;
+    const timer = setTimeout(() => setNetStatus(null), 1200);
+    return () => clearTimeout(timer);
+  }, [netStatus]);
+
+  // Refresh search when filters change
   useEffect(() => {
     updateSearch(query);
   }, [
     sortBy, bpm, bpmType, sampleType,
     instruments, genres, currentPage,
     musicKey, chordType
-  ]); 
+  ]);
+
+  // Initialize query from URL or localStorage and keep URL in sync
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initial = (params.get('q') ?? localStorage.getItem('lastQuery') ?? '').trim();
+    if (initial) {
+      setQuery(initial);
+      // kick an initial search
+      updateSearch(initial, true);
+    }
+    // no cleanup needed
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (query) {
+      params.set('q', query);
+      localStorage.setItem('lastQuery', query);
+    } else {
+      params.delete('q');
+      localStorage.removeItem('lastQuery');
+    }
+    const url = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', url);
+  }, [query]);
 
   const [smplCancellation, smplSetCancellation] = useState<SamplePlaybackCancellation | null>(null);
   const pbCtx: SamplePlaybackContext = {
     cancellation: smplCancellation,
     setCancellation: smplSetCancellation
   }
+
+  // Simple keyboard navigation across results
+  const focusedIndexRef = useRef<number>(-1);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!results.length) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        focusedIndexRef.current = Math.min(results.length - 1, focusedIndexRef.current + 1);
+        scrollIntoView(focusedIndexRef.current);
+        if (autoPlayOnNavigate) triggerRowPlay(focusedIndexRef.current);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        focusedIndexRef.current = Math.max(0, focusedIndexRef.current - 1);
+        scrollIntoView(focusedIndexRef.current);
+        if (autoPlayOnNavigate) triggerRowPlay(focusedIndexRef.current);
+      } else if (e.key === 'Enter' && focusedIndexRef.current >= 0) {
+        e.preventDefault();
+        // Programmatically trigger click on the focused row
+        const el = document.querySelector(`[data-sample-idx="${focusedIndexRef.current}"]`) as HTMLElement | null;
+        el?.click();
+      }
+    };
+    const scrollIntoView = (idx: number) => {
+      const el = document.querySelector(`[data-sample-idx="${idx}"]`);
+      (el as HTMLElement | null)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // Add a brief highlight
+      if (el) {
+        (el as HTMLElement).classList.add('ring-1','ring-white/20');
+        setTimeout(() => (el as HTMLElement).classList.remove('ring-1','ring-white/20'), 400);
+      }
+    };
+    const triggerRowPlay = (idx: number) => {
+      const el = document.querySelector(`[data-sample-idx="${idx}"] button[aria-label]`) as HTMLButtonElement | null;
+      el?.click();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [results, autoPlayOnNavigate]);
 
   // Keyboard shortcuts for musicians
   useEffect(() => {
@@ -156,7 +264,14 @@ function App() {
   }
 
   async function updateSearch(newQuery: string, resetPage = false) {
+      const seq = ++latestSearchSeq.current;
       try {
+        const q = newQuery.trim();
+        if (q.length === 0) {
+          setResults([]);
+          setResultCount(0);
+          return;
+        }
         const payload = createSearchRequest(newQuery);
         payload.variables.sort = sortBy;
         if (sortBy == "random") {
@@ -196,9 +311,20 @@ function App() {
 
         pbCtx.cancellation?.(); // stop any sample that's currently playing
 
+        // Ignore out-of-date responses
+        if (seq !== latestSearchSeq.current) return;
         const data = resp.data.data.assetsSearch;
 
-        setResults(data.items);
+        // Client-side exact-match boost: move exact name matches to top
+        const ql = q.toLowerCase();
+        const boosted = [...data.items].sort((a: any, b: any) => {
+          const an = (a.name.split('/').pop() || '').toLowerCase();
+          const bn = (b.name.split('/').pop() || '').toLowerCase();
+          const ae = an === ql ? 1 : (an.includes(ql) ? 0.5 : 0);
+          const be = bn === ql ? 1 : (bn.includes(ql) ? 0.5 : 0);
+          return be - ae;
+        });
+        setResults(boosted);
         setResultCount(data.response_metadata.records);
 
         setCurrentPage(resetPage ? 1 : data.pagination_metadata.currentPage);
@@ -222,6 +348,7 @@ function App() {
   }
 
   return (
+    <ToastProvider>
     <main className="flex flex-col gap-4 m-6 h-screen animate-fadeIn">
       {/* Header with Splice Logo */}
       <div className="flex items-center justify-between animate-slideIn">
@@ -252,7 +379,7 @@ function App() {
 
       <HelpModal isOpen={help.isOpen} onClose={help.onClose}/>
 
-      <div className="flex gap-3 animate-slideIn" style={{ animationDelay: '0.1s' }}>
+      <div className="flex gap-3 items-start animate-slideIn" style={{ animationDelay: '0.1s' }}>
         <Input
             type="text"
             aria-label="Search for samples"
@@ -264,6 +391,15 @@ function App() {
             onChange={handleSearchInput}
             startContent={
               <SearchIcon className="w-5" />
+            }
+            endContent={
+              searchLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <CircularProgress aria-label="Searching" className="w-4 h-4" />
+                </div>
+              ) : (
+                <div className="text-[10px] text-gray-500 pr-1">Press Enter</div>
+              )
             }
             className="w-full max-w-2xl"
           />
@@ -279,19 +415,93 @@ function App() {
             <SelectItem key="random">Random</SelectItem>
         </Select>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button isIconOnly variant="bordered" aria-label="Help" 
                   onClick={help.onOpen}
                   className="hover-lift">
             <QuestionMarkCircleIcon className="w-5" />
           </Button>
           
+          <Button isIconOnly variant="bordered" aria-label="Diagnostics" 
+                  onClick={() => diagnostics.open()}
+                  className="hover-lift"
+                  title="Diagnostics">
+            <InformationCircleIcon className="w-5 h-5" />
+          </Button>
+
           <Button isIconOnly variant="bordered" aria-label="Settings" 
                   onClick={settings.onOpen}
                   className="hover-lift">
             <WrenchIcon className="w-5" />
           </Button>
+          { netStatus && <span className="text-xs text-gray-400 pl-2">{netStatus}</span> }
         </div>
+      </div>
+
+      {/* Quick controls row */}
+      <div className="flex items-center gap-3 text-xs text-gray-300">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={compactMode} onChange={(e) => setCompactMode(e.target.checked)} />
+          Compact rows
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={hoverAudition} onChange={(e) => setHoverAudition(e.target.checked)} />
+          Play on hover
+        </label>
+        {hoverAudition && (
+          <label className="flex items-center gap-2">
+            Delay
+            <input type="range" min={0} max={600} value={hoverDelayMs} onChange={(e)=>setHoverDelayMs(parseInt((e.target as HTMLInputElement).value))}/>
+            <span className="tabular-nums">{hoverDelayMs}ms</span>
+          </label>
+        )}
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={autoPlayOnNavigate} onChange={(e) => setAutoPlayOnNavigate(e.target.checked)} />
+          Auto-play on Arrow keys
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
+          Favorites only
+        </label>
+        <label className="flex items-center gap-2">
+          Waveform width
+          <input type="range" min={280} max={800} value={waveformWidth} onChange={(e) => setWaveformWidth(parseInt((e.target as HTMLInputElement).value))} />
+          <span className="tabular-nums">{waveformWidth}px</span>
+        </label>
+        <label className="flex items-center gap-2">
+          Min dur
+          <input type="range" min={0} max={60} value={minDuration} onChange={(e)=>setMinDuration(parseInt((e.target as HTMLInputElement).value))} />
+          <span className="tabular-nums">{minDuration}s</span>
+        </label>
+        <label className="flex items-center gap-2">
+          Max dur
+          <input type="range" min={1} max={120} value={maxDuration} onChange={(e)=>setMaxDuration(parseInt((e.target as HTMLInputElement).value))} />
+          <span className="tabular-nums">{maxDuration}s</span>
+        </label>
+        <label className="flex items-center gap-2">
+          Min BPM
+          <input type="range" min={0} max={240} value={minBpm} onChange={(e)=>setMinBpm(parseInt((e.target as HTMLInputElement).value))} />
+          <span className="tabular-nums">{minBpm}</span>
+        </label>
+        <label className="flex items-center gap-2">
+          Max BPM
+          <input type="range" min={0} max={300} value={maxBpm} onChange={(e)=>setMaxBpm(parseInt((e.target as HTMLInputElement).value))} />
+          <span className="tabular-nums">{maxBpm}</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={sortKeyProximity} onChange={(e)=>setSortKeyProximity(e.target.checked)} />
+          Sort by key proximity
+        </label>
+        <button
+          className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
+          onClick={() => pbCtx.cancellation?.()}
+        >Stop all</button>
+        <button
+          className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
+          onClick={() => {
+            setMinDuration(0); setMaxDuration(30); setMinBpm(0); setMaxBpm(999); setFavoritesOnly(false); setSortKeyProximity(false);
+          }}
+        >Reset filters</button>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -414,7 +624,7 @@ function App() {
             <p className="text-gray-400 text-sm">Try changing your query and filters</p>
           </div>
         : <div ref={resultContainer}
-            className="card my-4 mb-16 overflow-y-scroll p-10 rounded-lg flex flex-col gap-6 animate-fadeIn"
+            className="card my-4 mb-16 overflow-y-scroll p-6 rounded-lg flex flex-col gap-4 animate-fadeIn"
         >
               <div className="flex justify-between items-center mb-2">
                 <div className="space-y-2">
@@ -422,17 +632,34 @@ function App() {
                   <p className="text-sm text-gray-400">Found {resultCount.toLocaleString()} {resultCount !== 1 ? "samples" : "sample"}</p>
                 </div>
 
-                <div className="flex items-center gap-3"> 
+        <div className="flex items-center gap-3"> 
                   { searchLoading && <CircularProgress aria-label="Loading results..." className="w-6 h-6"/> } 
                 </div>
               </div>
 
-              <div className="flex-1 flex flex-col gap-4">
-              { results.map((sample, index) => (
-                <div key={sample.uuid} style={{ animationDelay: `${index * 0.05}s` }} className="animate-slideIn">
-                  <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx}/>
-                </div>
-              ))}
+              <div className="flex-1">
+                <VirtualList
+                  items={(favoritesOnly ? results.filter((r: any) => localStorage.getItem(`fav:${r.uuid}`) === '1') : results)
+                    .filter((r: any) => {
+                      const durSec = (r.duration ?? 0) / 1000;
+                      const bpmOk = (r.bpm == null) || (r.bpm >= minBpm && r.bpm <= maxBpm);
+                      return durSec >= minDuration && durSec <= maxDuration && bpmOk;
+                    })
+                    .sort((a: any, b: any) => {
+                      if (!sortKeyProximity || !musicKey) return 0;
+                      const ka = (a.key || '').toUpperCase();
+                      const kb = (b.key || '').toUpperCase();
+                      const dist = (k: string) => (k && musicKey) ? Math.min(Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0)), 12 - Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0))) : 99;
+                      return dist(ka) - dist(kb);
+                    })}
+                  height={600}
+                  itemHeight={compactMode ? 100 : 140}
+                  render={(sample, index) => (
+                    <div key={sample.uuid} className="pr-2" data-sample-idx={index}>
+                      <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} />
+                    </div>
+                  )}
+                />
               </div>
 
               <div className="w-full flex justify-center">
@@ -471,6 +698,7 @@ function App() {
             </div>
       }
     </main>
+    </ToastProvider>
   );
 }
 

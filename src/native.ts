@@ -5,11 +5,11 @@ import { invoke } from '@tauri-apps/api/tauri';
  * The path is required to end with ".wav".
  */
 // /src-tauri/src/files.rs
-export async function writeSampleFile(baseDir: string, relativePath: string, buffer: Buffer) {
+export async function writeSampleFile(baseDir: string, relativePath: string, buffer: Buffer | Uint8Array | number[]) {
   await invoke("write_sample_file", {
     baseDir,
     relativePath,
-    buffer: Array.from(buffer)
+    buffer: Array.from(buffer instanceof Uint8Array ? buffer : (buffer as any))
   });
 }
 

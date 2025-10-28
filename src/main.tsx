@@ -6,6 +6,7 @@ import { Buffer } from "buffer";
 import App from "./ui/App";
 import { loadConfig } from "./config";
 import { refreshDarkMode } from "./ui/theming";
+import { DiagnosticsProvider, ErrorBoundary } from "./ui/diagnostics";
 
 import "./ui/styles.css";
 
@@ -18,7 +19,11 @@ refreshDarkMode();
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <NextUIProvider>
-      <App />
+      <DiagnosticsProvider>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </DiagnosticsProvider>
     </NextUIProvider>
   </React.StrictMode>,
 );

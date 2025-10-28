@@ -263,3 +263,8 @@ body {
   background-size: 200% 100%;
   animation: shimmer 1.5s linear infinite;
 }
+
+/* Numeric UI improvements and tight chips */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+.num-badge { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chip-tight { padding-left: 0.5rem; padding-right: 0.5rem; }

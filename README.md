@@ -5,14 +5,18 @@ A minimalist, clean alternative frontend for the popular [Splice](https://splice
 ## Features
 
 - OpenAI Sans typography
-- Optimized performance  
+- Optimized performance (virtualized list, memoized rows, cached waveforms)
 - No authentication required
-- Full drag-and-drop support
-- Minimalist black and white design
-- Keyboard shortcuts for rapid workflow
-- Buttery smooth liquid animations
-- One-click play/pause for samples
-- Cross-platform support (Windows, macOS, Linux)
+- Full drag-and-drop support (desktop) and web-friendly drag (WAV/MP3 DownloadURL)
+- Minimalist black and white design with subtle, fast animations
+- Keyboard + mouse workflow: play on hover (optional), auto‑play on Arrow keys (optional)
+- Exact‑match boosting + query highlighting
+- Adjustable waveform lane width; accurate, cached waveforms
+- Duration + BPM range filters, key proximity sort
+- Pitch/time preview: playback rate (0.5x–2.0x) and ±12 semitone pitch (preview only)
+- Download button with animated feedback
+- Diagnostics modal and error boundary
+- Cross-platform support (Web, Windows/macOS/Linux via Tauri)
 
 ## Keyboard Shortcuts
 
@@ -21,6 +25,7 @@ A minimalist, clean alternative frontend for the popular [Splice](https://splice
 - **Space** - Play/Pause current sample
 - **H** - Open help
 - **Ctrl+,** (or Cmd+, on Mac) - Open settings
+- **↑/↓** - Move through results (optional auto‑play toggle)
 
 ## Download & Install
 
@@ -106,11 +111,13 @@ npm run tauri build -- --target x86_64-unknown-linux-gnu
 
 ## How It Works
 
-1. **Search** - Type in the search bar to find samples
-2. **Preview** - Click the play button to listen to samples
-3. **Filter** - Use filters to narrow down by genre, instrument, BPM, key, etc.
-4. **Drag & Drop** - Drag samples directly into your DAW from the desktop app
-5. **Download** - Samples are automatically saved to your configured directory
+1. **Search** – Type in the search bar; spinner shows while fetching. Exact matches are boosted and highlighted.
+2. **Preview** – Click play, or enable “Play on hover” / “Auto‑play on Arrow keys” in the header controls.
+3. **Filter** – Use inline sliders for Duration/BPM; toggle Favorites; optionally sort by key proximity.
+4. **Waveform** – Accurate waveform renders in a fixed lane; adjust width from the header.
+5. **Pitch/Time** – For quick audition, adjust Rate and Pitch sliders in the row (preview‑only).
+6. **Drag & Drop** – Desktop: drag WAV into your DAW. Web: provides WAV/MP3 DownloadURL for many targets.
+7. **Download** – Click Download; animated feedback confirms the action.
 
 ## Project Structure
 
@@ -124,6 +131,12 @@ splicedd/
 │   └── src/            # Tauri commands
 └── public/             # Static assets
 ```
+
+## Roadmap
+
+- Label/pack filters and exclude‑tag search
+- Queue/favorites export (CSV/text)
+- Offline cache of decoded previews
 
 ## License
 

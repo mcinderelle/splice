@@ -61,8 +61,12 @@ export default function HelpModal({
                   description="Clear search"
                 />
                 <ShortcutItem 
-                  keys={["Space"]}
-                  description="Play/Pause current sample"
+                  keys={["Space", "P"]}
+                  description="Play/Pause selected sample"
+                />
+                <ShortcutItem 
+                  keys={["S"]}
+                  description="Stop selected sample"
                 />
                 <ShortcutItem 
                   keys={["Ctrl", ","]}

@@ -1,54 +1,71 @@
 /**
- * Browser-compatible fetch wrapper that works in both Tauri and browser environments
+ * Browser- and Tauri-compatible HTTP fetch wrapper.
  */
+
+type ResponseTypeOption = 'Json' | 'Binary' | 'Text';
+
+export interface HttpFetchOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  responseType?: ResponseTypeOption;
+  retries?: number;
+  retryDelayMs?: number;
+}
+
+export interface HttpFetchJsonResult<T = unknown> { data: T }
+export interface HttpFetchBinaryResult { data: Uint8Array }
+export interface HttpFetchTextResult { data: string }
+export type HttpFetchResult<T = unknown> = HttpFetchBinaryResult | HttpFetchJsonResult<T> | HttpFetchTextResult;
 
 /**
- * Performs an HTTP fetch request, compatible with both Tauri and browser environments
- * @param url - The URL to fetch
- * @param options - Fetch options (method, headers, body, responseType)
- * @returns Promise containing the response data
+ * Performs an HTTP request in both Tauri and browser environments.
  */
-export async function httpFetch(url: string, options: any): Promise<any> {
-  const maxRetries = options?.retries ?? 2;
-  const retryDelayMs = options?.retryDelayMs ?? 300;
+export async function httpFetch<T = unknown>(url: string, options: HttpFetchOptions = {}): Promise<HttpFetchResult<T>> {
+  if (typeof url !== 'string' || url.trim() === '') {
+    throw new Error('Invalid URL provided to httpFetch');
+  }
+  const maxRetries = options.retries ?? 2;
+  const retryDelayMs = options.retryDelayMs ?? 300;
 
-  const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const attemptOnce = async () => {
-    // Check if we're in Tauri environment (Tauri v1 detection)
+  const attemptOnce = async (): Promise<HttpFetchResult<T>> => {
+    // Tauri v1 detection via global flag on window
     if (typeof window !== 'undefined' && '__TAURI__' in window) {
-      // Use Tauri v1 HTTP client
-      const { fetch: tauriFetch } = await import('@tauri-apps/api/http');
-      
+      const { fetch: tauriFetch, ResponseType } = await import('@tauri-apps/api/http');
+
+      const rt = options.responseType === 'Binary'
+        ? ResponseType.Binary
+        : options.responseType === 'Text'
+          ? ResponseType.Text
+          : ResponseType.JSON;
+
       const response = await tauriFetch(url, {
-        method: options.method || 'GET',
-        headers: options.headers || {},
-        body: options.body ? {
-          type: 'Json',
-          payload: options.body
-        } : undefined,
-        responseType: options.responseType === 'Binary' ? 2 : 1 // 1 = Text, 2 = Binary
-      });
-      
-      if (options.responseType === 'Binary') {
-        let binaryData: Uint8Array;
-        if (response.data instanceof Uint8Array) {
-          binaryData = response.data;
-        } else if (response.data instanceof ArrayBuffer) {
-          binaryData = new Uint8Array(response.data);
-        } else {
-          binaryData = new Uint8Array(response.data as ArrayLike<number>);
-        }
-        return { data: binaryData };
+        method: options.method ?? 'GET',
+        headers: options.headers ?? {},
+        body: options.body !== undefined ? { type: 'Json', payload: options.body } : undefined,
+        responseType: rt,
+      } as any);
+
+      if (rt === ResponseType.Binary) {
+        const raw = (response as any).data;
+        if (raw instanceof Uint8Array) return { data: raw };
+        if (raw instanceof ArrayBuffer) return { data: new Uint8Array(raw) };
+        return { data: new Uint8Array(raw as ArrayLike<number>) };
       }
-      
-      const parsedData = typeof response.data === 'string'
-        ? JSON.parse(response.data)
-        : response.data;
-      return { data: parsedData };
+
+      if (rt === ResponseType.Text) {
+        const rawData = (response as any).data;
+        return { data: typeof rawData === 'string' ? rawData : String(rawData) };
+      }
+
+      // JSON
+      const jsonData = (response as any).data as T;
+      return { data: jsonData } as HttpFetchJsonResult<T>;
     }
-    
-    // Browser fallback - use proxy to bypass CORS
+
+    // Browser fallback with simple proxy mapping for known CORS hosts
     let proxyUrl = url;
     if (url.includes('surfaces-graphql.splice.com')) {
       proxyUrl = url.replace('https://surfaces-graphql.splice.com/graphql', '/graphql');
@@ -57,55 +74,69 @@ export async function httpFetch(url: string, options: any): Promise<any> {
       const urlPath = url.substring(url.indexOf('/audio_samples'));
       proxyUrl = urlPath;
     }
-    
+
+    // Ensure JSON body and headers are aligned in browser
+    const isJsonBody = options.body !== undefined;
+    const headers = new Headers(options.headers ?? {});
+    if (isJsonBody && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+
     const response = await fetch(proxyUrl, {
-      method: options.method || 'GET',
-      headers: options.headers,
-      body: options.body ? JSON.stringify(options.body) : undefined
+      method: options.method ?? 'GET',
+      headers,
+      body: isJsonBody ? JSON.stringify(options.body) : undefined,
     });
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    
+
     if (options.responseType === 'Binary') {
       const arrayBuffer = await response.arrayBuffer();
       return { data: new Uint8Array(arrayBuffer) };
     }
-    const data = await response.json();
-    return { data };
+
+    if (options.responseType === 'Text') {
+      const text = await response.text();
+      return { data: text };
+    }
+
+    // Default to JSON parsing
+    const data = (await response.json()) as T;
+    return { data } as HttpFetchJsonResult<T>;
   };
 
-  let lastError: any = null;
-  for (let i = 0; i <= maxRetries; i++) {
+  let lastError: unknown = null;
+  for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex++) {
     try {
       const result = await attemptOnce();
-      // Dispatch success event
       try {
-        window.dispatchEvent(new CustomEvent('httpFetch:success', {
-          detail: { url, attempt: i + 1 }
-        }));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('httpFetch:success', { detail: { url, attempt: attemptIndex + 1 } }));
+        }
       } catch {}
       return result;
     } catch (err) {
       lastError = err;
-      if (i < maxRetries) {
-        // Dispatch retry event
+      if (attemptIndex < maxRetries) {
         try {
-          window.dispatchEvent(new CustomEvent('httpFetch:retry', {
-            detail: { url, attempt: i + 1, error: String(err) }
-          }));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('httpFetch:retry', { detail: { url, attempt: attemptIndex + 1, error: String(err) } }));
+          }
         } catch {}
-        await delay(retryDelayMs * (i + 1));
+        await delay(retryDelayMs * (attemptIndex + 1));
         continue;
       }
     }
   }
+
+  // Exhausted retries
+  // eslint-disable-next-line no-console
   console.error(`Error fetching ${url}:`, lastError);
   try {
-    window.dispatchEvent(new CustomEvent('httpFetch:error', {
-      detail: { url, error: String(lastError) }
-    }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('httpFetch:error', { detail: { url, error: String(lastError) } }));
+    }
   } catch {}
-  throw lastError;
+  throw lastError as Error;
 }
 

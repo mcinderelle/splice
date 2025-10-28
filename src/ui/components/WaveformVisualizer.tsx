@@ -16,6 +16,7 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
   const RAF = useRef<number | null>(null);
   const lastTsRef = useRef<number | null>(null);
   const [animatedTime, setAnimatedTime] = useState(0);
+  const [canvasWidth, setCanvasWidth] = useState<number>(520);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -46,7 +47,9 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
         const channelData = audioBuffer.getChannelData(0);
-        const samples = 100;
+        // Choose number of bars based on available width to avoid cutoff
+        const approxBars = Math.max(100, Math.floor((canvasRef.current?.clientWidth || 520) / 4));
+        const samples = approxBars;
         const blockSize = Math.max(1, Math.floor(channelData.length / samples));
         const waveform: number[] = [];
 
@@ -89,8 +92,11 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
 
       setAnimatedTime(prev => {
         if (isPlaying) {
+          // Wrap around seamlessly for looped playback
           const next = prev + dt;
-          return Math.min(duration, Math.max(0, next));
+          if (!Number.isFinite(duration) || duration <= 0) return 0;
+          const wrapped = next % duration;
+          return Math.max(0, wrapped);
         }
         // Ease toward currentTime when paused
         const target = currentTime;
@@ -108,6 +114,20 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
       lastTsRef.current = null;
     };
   }, [isPlaying, currentTime, duration]);
+
+  // Resize observer to keep canvas responsive
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const w = Math.max(240, Math.floor(entry.contentRect.width));
+        setCanvasWidth(w);
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   // Draw waveform with progress
   useEffect(() => {
@@ -127,8 +147,10 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
     ctx.clearRect(0, 0, width, height);
     
     const barCount = waveformData.length;
-    const barWidth = 3;
+    // Scale bar width and gap so bars fit exactly within width
+    const desiredBars = waveformData.length;
     const gap = 1;
+    const barWidth = Math.max(2, Math.floor((width - (desiredBars - 1) * gap) / desiredBars));
     const totalBarWidth = barWidth + gap;
     const maxBarHeight = height * 0.75; // Use 75% of height for bars
     const centerY = height / 2;
@@ -172,9 +194,9 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
   return (
     <canvas
       ref={canvasRef}
-      width={520}
+      width={canvasWidth}
       height={40}
-      className="h-7.5"
+      className={`h-7.5 w-full ${className}`}
     />
   );
 }

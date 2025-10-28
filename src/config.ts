@@ -9,6 +9,9 @@ export interface SpliceddConfig {
   sampleDir: string;
   placeholders: boolean;
   darkMode: boolean;
+  preservePitch: boolean;
+  waveformWidth: number;
+  infiniteScroll?: boolean;
 
   configured: boolean;
 }
@@ -19,6 +22,9 @@ function defaultCfg(): SpliceddConfig {
     sampleDir: "",
     darkMode: true,
     placeholders: false,
+    preservePitch: true,
+    waveformWidth: 520,
+    infiniteScroll: false,
     configured: false
   }
 }
@@ -73,7 +79,9 @@ export async function loadConfig() {
       dir: BaseDirectory.AppConfig,
     });
 
-    globalCfg = { ...defaultCfg(), ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // Ensure defaults for newly added fields
+    globalCfg = { ...defaultCfg(), ...parsed };
   }
 }
 

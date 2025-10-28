@@ -6,6 +6,8 @@ import React from "react";
 export interface SamplePlaybackContext {
   cancellation: SamplePlaybackCancellation | null;
   setCancellation: React.Dispatch<React.SetStateAction<SamplePlaybackCancellation | null>>;
+  currentUuid?: string | null;
+  setCurrentUuid?: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 /**

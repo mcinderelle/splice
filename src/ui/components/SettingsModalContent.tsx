@@ -8,6 +8,9 @@ export default function SettingsModalContent() {
   const sampleDir = useCfgSyncedState<string>("sampleDir");
   const placeholders = useCfgSyncedState<boolean>("placeholders");
   const darkMode = useCfgSyncedState<boolean>("darkMode");
+  const preservePitch = useCfgSyncedState<boolean>("preservePitch");
+  const waveformWidth = useCfgSyncedState<number>("waveformWidth");
+  const infiniteScroll = useCfgSyncedState<boolean>("infiniteScroll");
 
   function closeFirstTimeSetup(onClose: () => void) {
     mutateCfg({ configured: true });
@@ -27,29 +30,33 @@ export default function SettingsModalContent() {
         </ModalHeader>
         <ModalBody className="pb-8 ml-2">
           <div className="space-y-4">
-            <div className="space-y-1">
-              <h4 className="text-medium font-medium">Sample path</h4>
-              <p className="text-small text-default-400">
-                The folder where downloaded Splice samples should be saved to. When dragging
-                samples into a DAW, this will be the directory it will read from.
-              </p>
-            </div>
+            { (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) && (
+              <>
+                <div className="space-y-1">
+                  <h4 className="text-medium font-medium">Sample path</h4>
+                  <p className="text-small text-default-400">
+                    The folder where downloaded Splice samples should be saved to. When dragging
+                    samples into a DAW, this will be the directory it will read from.
+                  </p>
+                </div>
 
-            <div className="flex gap-2">
-              <Input
-                type="text" required variant="bordered"
-                placeholder='e.g. "D:/Samples/splice"'
-                value={ cfg().sampleDir }
-                onChange={ x => mutateCfgSync(x.target.value, sampleDir) }
-                startContent={
-                  <FolderOpenIcon className="w-4 text-foreground-500 mt-1 mr-1" />
-                }
-              />
+                <div className="flex gap-2">
+                  <Input
+                    type="text" required variant="bordered"
+                    placeholder='e.g. "D:/Samples/splice"'
+                    value={ cfg().sampleDir }
+                    onChange={ x => mutateCfgSync(x.target.value, sampleDir) }
+                    startContent={
+                      <FolderOpenIcon className="w-4 text-foreground-500 mt-1 mr-1" />
+                    }
+                  />
 
-              <BrowseButton variant="bordered" directory
-                onPick={ x => mutateCfgSync(x, sampleDir) }
-              >Browse</BrowseButton>
-            </div>
+                  <BrowseButton variant="bordered" directory
+                    onPick={ x => mutateCfgSync(x, sampleDir) }
+                  >Browse</BrowseButton>
+                </div>
+              </>
+            )}
 
             <div className="space-y-1">
               <h4 className="text-medium font-medium">Placeholders</h4>
@@ -78,6 +85,50 @@ export default function SettingsModalContent() {
                   Dark mode
                 </Switch>
             </div>
+
+            <div className="space-y-1">
+              <h4 className="text-medium font-medium">Audio preview</h4>
+              <p className="text-small text-default-400">
+                Preserve pitch when changing playback rate (where supported).
+              </p>
+            </div>
+
+            <div>
+              <Switch isSelected={ cfg().preservePitch } onValueChange={ x => mutateCfgSync(x, preservePitch) }>
+                Preserve pitch on rate change
+              </Switch>
+            </div>
+
+            <div className="space-y-1">
+              <h4 className="text-medium font-medium">Waveform width</h4>
+              <p className="text-small text-default-400">
+                Adjust the default width of waveforms in the sample list.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={280}
+                max={960}
+                value={ cfg().waveformWidth }
+                onChange={ e => mutateCfgSync(parseInt(e.target.value), waveformWidth) }
+                className="grow"
+              />
+              <span className="tabular-nums w-16 text-right">{cfg().waveformWidth}px</span>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <h4 className="text-medium font-medium">Result list</h4>
+            <p className="text-small text-default-400">
+              Enable infinite scroll (replaces pagination). Loads a page at a time on demand.
+            </p>
+          </div>
+          <div>
+            <Switch isSelected={ cfg().infiniteScroll ?? false } onValueChange={ x => mutateCfgSync(x, infiniteScroll) }>
+              Infinite scroll
+            </Switch>
           </div>
 
           { !cfg().configured &&

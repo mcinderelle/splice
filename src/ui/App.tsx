@@ -3,12 +3,14 @@ import { Button, CircularProgress, Input, Modal, Pagination, Popover, PopoverCon
 import { SearchIcon, ChevronDownIcon } from '@nextui-org/shared-icons'
 import { WrenchIcon, QuestionMarkCircleIcon, InformationCircleIcon } from "@heroicons/react/20/solid";
 import { cfg } from "../config";
-import { GRAPHQL_URL, SpliceSample, createSearchRequest } from "../splice/api";
+import { GRAPHQL_URL, SpliceSample, createSearchRequest, SpliceSearchResponse } from "../splice/api";
 import { ChordType, MusicKey, SpliceSampleType, SpliceSortBy, SpliceTag } from "../splice/entities";
-import { httpFetch } from "../utils/httpFetch";
+import { httpFetch, type HttpFetchJsonResult } from "../utils/httpFetch";
 import React from "react";
 import SampleListEntry from "./components/SampleListEntry";
 import VirtualList from "./components/VirtualList";
+import InfiniteResults from "./components/InfiniteResults";
+// removed duplicate React import
 import SettingsModalContent from "./components/SettingsModalContent";
 import KeyScaleSelection from "./components/KeyScaleSelection";
 import HelpModal from "./components/HelpModal";
@@ -37,13 +39,17 @@ function App() {
   const [resultCount, setResultCount] = useState(0);
   const resultContainer = useRef<HTMLDivElement | null>(null);
 
-  const [queryTimer, setQueryTimer] = useState<NodeJS.Timeout | null>(null);
+  const [queryTimer, setQueryTimer] = useState<number | null>(null);
+  useEffect(() => {
+    return () => { if (queryTimer != null) { window.clearTimeout(queryTimer); } };
+  }, [queryTimer]);
 
   const [sortBy, setSortBy] = useState<SpliceSortBy>("relevance");
   const [sampleType, setSampleType] = useState<SpliceSampleType | "any">("any")
 
   const [knownInstruments, setKnownInstruments] = useState<{name: string, uuid: string}[]>([]);
   const [knownGenres, setKnownGenres] = useState<{name: string, uuid: string}[]>([]);
+  const [knownTags, setKnownTags] = useState<{name: string, uuid: string}[]>([]);
 
   const [instruments, setInstruments] = useState(new Set<string>([]));
   const [genres, setGenres] = useState(new Set<string>([]));
@@ -53,22 +59,104 @@ function App() {
   const [chordType, setChordType] = useState<ChordType | null>(null);
 
   const [totalPages, setTotalPages] = useState(0);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [netStatus, setNetStatus] = useState<string | null>(null);
   const latestSearchSeq = useRef(0);
   const [compactMode, setCompactMode] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const v = localStorage.getItem('ui:sidebarOpen');
+    return v == null ? false : v === '1';
+  });
+  useEffect(()=>{ try{ localStorage.setItem('ui:sidebarOpen', sidebarOpen ? '1':'0'); } catch{} }, [sidebarOpen]);
   const [hoverAudition, setHoverAudition] = useState(false);
   const [hoverDelayMs, setHoverDelayMs] = useState(150);
   const [autoPlayOnNavigate, setAutoPlayOnNavigate] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [waveformWidth, setWaveformWidth] = useState(520);
+  const [waveformWidth, setWaveformWidth] = useState(cfg().waveformWidth);
+  const [useInfinite, setUseInfinite] = useState<boolean>(() => {
+    try { const v = localStorage.getItem('ui:infiniteScroll'); return v ? v === '1' : (cfg().infiniteScroll ?? false); } catch { return cfg().infiniteScroll ?? false; }
+  });
+  useEffect(()=>{ try{ localStorage.setItem('ui:infiniteScroll', useInfinite ? '1':'0'); } catch{} }, [useInfinite]);
   const [minDuration, setMinDuration] = useState(0);
   const [maxDuration, setMaxDuration] = useState(30);
   const [minBpm, setMinBpm] = useState(0);
   const [maxBpm, setMaxBpm] = useState(999);
   const [sortKeyProximity, setSortKeyProximity] = useState(false);
+  // Controlled open states for intuitive close-on-select UX
+  const [instOpen, setInstOpen] = useState(false);
+  const [genresOpen, setGenresOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [keyPopOpen, setKeyPopOpen] = useState(false);
+  const [bpmPopOpen, setBpmPopOpen] = useState(false);
+
+  // Inline SVG badge for instruments (unique shapes + colors)
+  const toTitle = (s: string) => s.replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+
+  const instrumentSvg = (name: string) => {
+    const n = name.toLowerCase();
+    const wrap = (path: React.ReactNode, color: string) => (
+      <span style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', width:20, height:20, borderRadius:9999, background: 'linear-gradient(145deg, rgba(255,255,255,0.06), rgba(0,0,0,0.2))', boxShadow:'inset 0 1px 1px rgba(255,255,255,0.12), 0 4px 12px rgba(0,0,0,0.35)' }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          {path}
+        </svg>
+      </span>
+    );
+    if (n.includes('piano') || n.includes('keys') || n.includes('keyboard')) return wrap(<>
+      <rect x="3" y="5" width="18" height="14" rx="2"/>
+      <line x1="6" y1="5" x2="6" y2="19"/>
+      <line x1="10" y1="5" x2="10" y2="19"/>
+      <line x1="14" y1="5" x2="14" y2="19"/>
+      <line x1="18" y1="5" x2="18" y2="19"/>
+    </>, '#e5e7eb');
+    if (n.includes('guitar')) return wrap(<>
+      <circle cx="9" cy="15" r="5"/>
+      <path d="M14 10l7-7"/>
+      <path d="M18 3l3 3"/>
+    </>, '#f59e0b');
+    if (n.includes('bass')) return wrap(<>
+      <path d="M6 8c4-3 8 1 6 5"/>
+      <circle cx="16" cy="14" r="2"/>
+      <circle cx="12" cy="16" r="1.5"/>
+    </>, '#10b981');
+    if (n.includes('drum') || n.includes('percussion') || n.includes('kit')) return wrap(<>
+      <ellipse cx="12" cy="8" rx="8" ry="3"/>
+      <path d="M4 8v6c0 1.7 3.6 3 8 3s8-1.3 8-3V8"/>
+    </>, '#ef4444');
+    if (n.includes('synth') || n.includes('lead')) return wrap(<>
+      <rect x="4" y="6" width="16" height="12" rx="2"/>
+      <path d="M7 10h2M11 10h2M15 10h2"/>
+    </>, '#8b5cf6');
+    if (n.includes('pad')) return wrap(<>
+      <rect x="5" y="5" width="14" height="14" rx="3"/>
+      <path d="M7 9h10M7 13h10"/>
+    </>, '#22c55e');
+    if (n.includes('pluck') || n.includes('arp')) return wrap(<>
+      <path d="M4 18l8-12 8 12"/>
+      <circle cx="12" cy="14" r="2"/>
+    </>, '#06b6d4');
+    if (n.includes('string')) return wrap(<>
+      <path d="M6 4l12 16"/>
+      <circle cx="8" cy="18" r="2"/>
+      <circle cx="16" cy="6" r="2"/>
+    </>, '#f97316');
+    if (n.includes('brass') || n.includes('trumpet') || n.includes('sax')) return wrap(<>
+      <path d="M4 12h8l5 3v-6l-5 3H4z"/>
+    </>, '#fde047');
+    if (n.includes('vocal') || n.includes('voice')) return wrap(<>
+      <circle cx="12" cy="8" r="3"/>
+      <path d="M12 11v6"/>
+      <path d="M8 20h8"/>
+    </>, '#38bdf8');
+    if (n.includes('fx') || n.includes('effect')) return wrap(<>
+      <polygon points="12 2 15 9 22 9 17 14 19 21 12 17 5 21 7 14 2 9 9 9 12 2"/>
+    </>, '#22d3ee');
+    return wrap(<>
+      <path d="M3 12h18"/>
+      <circle cx="12" cy="12" r="3"/>
+    </>, '#94a3b8');
+  };
 
   useEffect(() => {
     const onRetry = (e: any) => setNetStatus(`Retrying… (${e?.detail?.attempt})`);
@@ -77,6 +165,10 @@ function App() {
       setNetStatus('Network error');
       diagnostics.record('Network error', e?.detail);
     };
+    // Mark first user interaction to enable hover-audition (autoplay guard)
+    const markInteract = () => { (window as any).__splicedd_interacted = true; };
+    window.addEventListener('pointerdown', markInteract, { once: true });
+    window.addEventListener('keydown', markInteract, { once: true });
     window.addEventListener('httpFetch:retry', onRetry as any);
     window.addEventListener('httpFetch:success', onSuccess as any);
     window.addEventListener('httpFetch:error', onError as any);
@@ -84,6 +176,8 @@ function App() {
       window.removeEventListener('httpFetch:retry', onRetry as any);
       window.removeEventListener('httpFetch:success', onSuccess as any);
       window.removeEventListener('httpFetch:error', onError as any);
+      window.removeEventListener('pointerdown', markInteract);
+      window.removeEventListener('keydown', markInteract);
     }
   }, []);
 
@@ -95,7 +189,9 @@ function App() {
 
   // Refresh search when filters change
   useEffect(() => {
-    updateSearch(query);
+    // smooth update on filter changes
+    const t = window.setTimeout(() => updateSearch(query), 50);
+    return () => window.clearTimeout(t);
   }, [
     sortBy, bpm, bpmType, sampleType,
     instruments, genres, currentPage,
@@ -106,11 +202,9 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initial = (params.get('q') ?? localStorage.getItem('lastQuery') ?? '').trim();
-    if (initial) {
-      setQuery(initial);
-      // kick an initial search
-      updateSearch(initial, true);
-    }
+    setQuery(initial);
+    // kick an initial search even if empty to hydrate constraints
+    updateSearch(initial, true, true);
     // no cleanup needed
   }, []);
 
@@ -128,13 +222,17 @@ function App() {
   }, [query]);
 
   const [smplCancellation, smplSetCancellation] = useState<SamplePlaybackCancellation | null>(null);
+  const [currentPlayingUuid, setCurrentPlayingUuid] = useState<string | null>(null);
   const pbCtx: SamplePlaybackContext = {
     cancellation: smplCancellation,
-    setCancellation: smplSetCancellation
+    setCancellation: smplSetCancellation,
+    currentUuid: currentPlayingUuid,
+    setCurrentUuid: setCurrentPlayingUuid
   }
 
   // Simple keyboard navigation across results
   const focusedIndexRef = useRef<number>(-1);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!results.length) return;
@@ -144,26 +242,28 @@ function App() {
         e.preventDefault();
         focusedIndexRef.current = Math.min(results.length - 1, focusedIndexRef.current + 1);
         scrollIntoView(focusedIndexRef.current);
+        setSelectedIndex(focusedIndexRef.current);
         if (autoPlayOnNavigate) triggerRowPlay(focusedIndexRef.current);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         focusedIndexRef.current = Math.max(0, focusedIndexRef.current - 1);
         scrollIntoView(focusedIndexRef.current);
+        setSelectedIndex(focusedIndexRef.current);
         if (autoPlayOnNavigate) triggerRowPlay(focusedIndexRef.current);
       } else if (e.key === 'Enter' && focusedIndexRef.current >= 0) {
         e.preventDefault();
         // Programmatically trigger click on the focused row
         const el = document.querySelector(`[data-sample-idx="${focusedIndexRef.current}"]`) as HTMLElement | null;
         el?.click();
+        setSelectedIndex(focusedIndexRef.current);
       }
     };
     const scrollIntoView = (idx: number) => {
       const el = document.querySelector(`[data-sample-idx="${idx}"]`);
       (el as HTMLElement | null)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      // Add a brief highlight
       if (el) {
-        (el as HTMLElement).classList.add('ring-1','ring-white/20');
-        setTimeout(() => (el as HTMLElement).classList.remove('ring-1','ring-white/20'), 400);
+        (el as HTMLElement).classList.add('ring-2','ring-sky-400/70','shadow-[0_0_32px_-10px_rgba(56,189,248,0.6)]');
+        setTimeout(() => (el as HTMLElement).classList.remove('ring-2','ring-sky-400/70','shadow-[0_0_32px_-10px_rgba(56,189,248,0.6)]'), 450);
       }
     };
     const triggerRowPlay = (idx: number) => {
@@ -182,12 +282,35 @@ function App() {
       const isTyping = activeElement?.tagName === 'INPUT' || 
                        activeElement?.tagName === 'TEXTAREA';
       
-      // Space to play/stop current sample
-      if (e.code === 'Space' && !isTyping) {
+      // Space/P to toggle play/pause on selected/focused row
+      if ((e.code === 'Space' || e.key.toLowerCase() === 'p') && !isTyping) {
         e.preventDefault();
-        pbCtx.cancellation?.();
+        const idx = (selectedIndex != null && selectedIndex >= 0)
+          ? selectedIndex
+          : (focusedIndexRef.current >= 0 ? focusedIndexRef.current : -1);
+        if (idx >= 0) {
+          const el = document.querySelector(`[data-sample-idx="${idx}"] button.play-button`) as HTMLButtonElement | null;
+          el?.click();
+        }
       }
       
+      // S to stop
+      if ((e.key.toLowerCase() === 's') && !isTyping) {
+        e.preventDefault();
+        const idx = (selectedIndex != null && selectedIndex >= 0)
+          ? selectedIndex
+          : (focusedIndexRef.current >= 0 ? focusedIndexRef.current : -1);
+        if (idx >= 0) {
+          const stopBtn = document.querySelector(`[data-sample-idx="${idx}"] button[aria-label="Stop sample"]`) as HTMLButtonElement | null;
+          if (stopBtn) {
+            stopBtn.click();
+          } else {
+            pbCtx.cancellation?.();
+          }
+        } else {
+          pbCtx.cancellation?.();
+        }
+      }
       // Esc to clear search
       if (e.key === 'Escape' && !isTyping) {
         setQuery("");
@@ -216,11 +339,11 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pbCtx, settings, help, setQuery]);
+  }, [pbCtx, settings, help, setQuery, selectedIndex]);
 
   function ensureContraintsGathered() {
     if (knownInstruments.length == 0 || knownGenres.length == 0) {
-      updateSearch("");
+      updateSearch("", false, true);
     }
   }
 
@@ -230,14 +353,17 @@ function App() {
   }
 
   function handleSearchInput(ev: React.ChangeEvent<HTMLInputElement>) {
-    setQuery(ev.target.value);
-    
-    if (queryTimer != null) {
-      clearTimeout(queryTimer);
-    }
-
-    // We set a timer, as to not overload Splice with needless requests while the user is typing.
-    let selfTimer = setTimeout(() => updateSearch(ev.target.value, true), 100);
+    const next = ev.target.value;
+    setQuery(next);
+    if (queryTimer != null) { window.clearTimeout(queryTimer); }
+    // Debounce, but guard against stale queries
+    setSearchLoading(true);
+    const scheduledQuery = next;
+    const selfTimer = window.setTimeout(() => {
+      if (scheduledQuery === (document.querySelector('input[aria-label="Search for samples"]') as HTMLInputElement)?.value) {
+        updateSearch(scheduledQuery, true);
+      }
+    }, 250);
     setQueryTimer(selfTimer);
   }
 
@@ -263,11 +389,11 @@ function App() {
     updateSearch(query, true);
   }
 
-  async function updateSearch(newQuery: string, resetPage = false) {
+  async function updateSearch(newQuery: string, resetPage = false, allowEmpty = false) {
       const seq = ++latestSearchSeq.current;
       try {
         const q = newQuery.trim();
-        if (q.length === 0) {
+        if (q.length === 0 && !allowEmpty) {
           setResults([]);
           setResultCount(0);
           return;
@@ -301,19 +427,20 @@ function App() {
 
         setSearchLoading(true);
 
-        const resp = await httpFetch(GRAPHQL_URL, {
+        const resp = await httpFetch<SpliceSearchResponse>(GRAPHQL_URL, {
           method: "POST",
           headers: {
             'Content-Type': 'application/json'
           },
-          body: payload
+          body: payload,
+          responseType: 'Json'
         });
 
         pbCtx.cancellation?.(); // stop any sample that's currently playing
 
         // Ignore out-of-date responses
         if (seq !== latestSearchSeq.current) return;
-        const data = resp.data.data.assetsSearch;
+        const data = (resp as HttpFetchJsonResult<SpliceSearchResponse>).data.data.assetsSearch;
 
         // Client-side exact-match boost: move exact name matches to top
         const ql = q.toLowerCase();
@@ -330,7 +457,7 @@ function App() {
         setCurrentPage(resetPage ? 1 : data.pagination_metadata.currentPage);
         setTotalPages(data.pagination_metadata.totalPages);
 
-        function findConstraints(name: "Genre" | "Instrument") {
+        function findConstraints(name: "Genre" | "Instrument" | "Tag") {
           return data.tag_summary.map((x: any) => x.tag)
             .filter((x: any) => x.taxonomy.name == name)
             .map((x: any) => ({ name: x.label, uuid: x.uuid }));
@@ -338,10 +465,11 @@ function App() {
 
         setKnownGenres(findConstraints("Genre"));
         setKnownInstruments(findConstraints("Instrument"));
+        setKnownTags(findConstraints("Tag"));
       } catch (error) {
         console.error("Error updating search:", error);
-        setResults([]);
-        setResultCount(0);
+        // Keep last results instead of flashing empty UI; show netStatus banner
+        setNetStatus('Temporary search error');
       } finally {
         setSearchLoading(false);
       }
@@ -349,7 +477,7 @@ function App() {
 
   return (
     <ToastProvider>
-    <main className="flex flex-col gap-4 m-6 h-screen animate-fadeIn">
+    <main className="flex flex-col gap-4 m-6 h-screen animate-fadeIn min-h-0">
       {/* Header with Splice Logo */}
       <div className="flex items-center justify-between animate-slideIn">
         <div className="flex items-center gap-4">
@@ -398,24 +526,46 @@ function App() {
                   <CircularProgress aria-label="Searching" className="w-4 h-4" />
                 </div>
               ) : (
-                <div className="text-[10px] text-gray-500 pr-1">Press Enter</div>
+                <div className="text-[10px] text-gray-500 pr-1 whitespace-nowrap flex items-center gap-1"><span>Press</span><kbd className="px-1 py-0.5 bg-gray-800 rounded border border-gray-700">Enter</kbd></div>
               )
             }
             className="w-full max-w-2xl"
           />
 
-        <Select variant="bordered"
-          aria-label="Sort by"
-          selectedKeys={[sortBy]} onChange={(e: any) => setSortBy(e.target.value as SpliceSortBy)}
-          className="w-48"
-        >
-            <SelectItem key="relevance">Most relevant</SelectItem>
-            <SelectItem key="popularity">Most popular</SelectItem>
-            <SelectItem key="recency">Most recent</SelectItem>
-            <SelectItem key="random">Random</SelectItem>
-        </Select>
+        <Popover placement="bottom" showArrow>
+          <PopoverTrigger>
+            <Button variant="bordered" className="w-48 justify-between" endContent={<ChevronDownIcon/>}>
+              { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="p-2 w-56">
+            <div className="flex flex-col">
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('relevance')}>Most relevant</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('popularity')}>Most popular</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('recency')}>Most recent</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('random')}>Random</button>
+            </div>
+          </PopoverContent>
+        </Popover>
 
         <div className="flex gap-2 items-center">
+          <Button size="sm" variant="bordered" className="hover-lift" onClick={()=>setSidebarOpen(v=>!v)} aria-label="Toggle filters">
+            {sidebarOpen ? 'Hide Filters' : 'Show Filters'}
+          </Button>
+          <Button size="sm" variant={useInfinite ? 'bordered' : 'faded'} className="hover-lift" onClick={()=>setUseInfinite(v=>!v)} aria-label="Toggle pagination mode" title="Toggle pagination vs infinite scroll">
+            {useInfinite ? 'Infinite scroll' : 'Pagination'}
+          </Button>
+          {/* visible shortcut badges */}
+          <div className="hidden md:flex items-center gap-1 text-[10px] text-gray-500 mr-2">
+            <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700">/</span>
+            <span>focus</span>
+            <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700 ml-2">Esc</span>
+            <span>clear</span>
+            <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700 ml-2">Space</span>
+            <span>play/pause</span>
+            <span className="px-1.5 py-0.5 bg-gray-800 rounded border border-gray-700 ml-2">Ctrl+,</span>
+            <span>settings</span>
+          </div>
           <Button isIconOnly variant="bordered" aria-label="Help" 
                   onClick={help.onOpen}
                   className="hover-lift">
@@ -438,182 +588,207 @@ function App() {
         </div>
       </div>
 
-      {/* Quick controls row */}
-      <div className="flex items-center gap-3 text-xs text-gray-300">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={compactMode} onChange={(e) => setCompactMode(e.target.checked)} />
-          Compact rows
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={hoverAudition} onChange={(e) => setHoverAudition(e.target.checked)} />
-          Play on hover
-        </label>
-        {hoverAudition && (
-          <label className="flex items-center gap-2">
-            Delay
-            <input type="range" min={0} max={600} value={hoverDelayMs} onChange={(e)=>setHoverDelayMs(parseInt((e.target as HTMLInputElement).value))}/>
-            <span className="tabular-nums">{hoverDelayMs}ms</span>
-          </label>
-        )}
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={autoPlayOnNavigate} onChange={(e) => setAutoPlayOnNavigate(e.target.checked)} />
-          Auto-play on Arrow keys
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
-          Favorites only
-        </label>
-        <label className="flex items-center gap-2">
-          Waveform width
-          <input type="range" min={280} max={800} value={waveformWidth} onChange={(e) => setWaveformWidth(parseInt((e.target as HTMLInputElement).value))} />
-          <span className="tabular-nums">{waveformWidth}px</span>
-        </label>
-        <label className="flex items-center gap-2">
-          Min dur
-          <input type="range" min={0} max={60} value={minDuration} onChange={(e)=>setMinDuration(parseInt((e.target as HTMLInputElement).value))} />
-          <span className="tabular-nums">{minDuration}s</span>
-        </label>
-        <label className="flex items-center gap-2">
-          Max dur
-          <input type="range" min={1} max={120} value={maxDuration} onChange={(e)=>setMaxDuration(parseInt((e.target as HTMLInputElement).value))} />
-          <span className="tabular-nums">{maxDuration}s</span>
-        </label>
-        <label className="flex items-center gap-2">
-          Min BPM
-          <input type="range" min={0} max={240} value={minBpm} onChange={(e)=>setMinBpm(parseInt((e.target as HTMLInputElement).value))} />
-          <span className="tabular-nums">{minBpm}</span>
-        </label>
-        <label className="flex items-center gap-2">
-          Max BPM
-          <input type="range" min={0} max={300} value={maxBpm} onChange={(e)=>setMaxBpm(parseInt((e.target as HTMLInputElement).value))} />
-          <span className="tabular-nums">{maxBpm}</span>
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={sortKeyProximity} onChange={(e)=>setSortKeyProximity(e.target.checked)} />
-          Sort by key proximity
-        </label>
-        <button
-          className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
-          onClick={() => pbCtx.cancellation?.()}
-        >Stop all</button>
-        <button
-          className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
-          onClick={() => {
-            setMinDuration(0); setMaxDuration(30); setMinBpm(0); setMaxBpm(999); setFavoritesOnly(false); setSortKeyProximity(false);
-          }}
-        >Reset filters</button>
-      </div>
-
-      <div className="flex gap-3 flex-wrap">
-        <Select placeholder="Instruments" aria-label="Instruments" variant="bordered"
-          selectionMode="multiple" onOpenChange={ensureContraintsGathered}
-          selectedKeys={instruments}
-          onSelectionChange={(x: any) => setInstruments(x as Set<string>)}
-          className="min-w-56"
-        >
-          { knownInstruments.map((x: any) => <SelectItem key={x.uuid}>{x.name}</SelectItem>) }
-        </Select>
-
-        <Select placeholder="Genres" aria-label="Genres" variant="bordered"
-          selectionMode="multiple" onOpenChange={ensureContraintsGathered}
-          selectedKeys={genres}
-          onSelectionChange={(x: any) => setGenres(x as Set<string>)}
-          className="min-w-56"
-        >
-          { knownGenres.map((x: any) => <SelectItem key={x.uuid}>{x.name}</SelectItem>) }
-        </Select>
-
-        <Select placeholder="Tags" aria-label="Tags" variant="bordered"
-          selectionMode="multiple"
-          selectedKeys={Array.from(tags).map((x: any) => x.uuid)}
-          onSelectionChange={(x: any) => updateTagState(x as Set<string>)}
-          className="min-w-56"
-        >
-          { Array.from(tags).map((x: any) => <SelectItem key={x.uuid}>{x.label}</SelectItem>) }
-        </Select>
-
-        <Popover placement="bottom" showArrow={true}>
-          <PopoverTrigger>
-            <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>}>
-              { 
-                (musicKey == null && chordType == null) ? "Key"
-                  : `${musicKey ?? ""}${chordType == null ? "" : chordType == "major" ? " Major" : " Minor"}`
-              }
-            </Button>
-          </PopoverTrigger>
-
-          <PopoverContent className="flex p-8 animate-scaleIn">
-            <KeyScaleSelection
-              onChordSet={setChordType} onKeySet={setMusicKey}
-              selectedChord={chordType} selectedKey={musicKey}
-            />
-          </PopoverContent>
-        </Popover>
-
-        <Popover placement="bottom" showArrow={true}>
-          <PopoverTrigger>
-            <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>}>
-              { (bpmType == "exact" && bpm?.bpm
-                  ? `${bpm?.bpm} BPM`
-                  : bpmType == "range" && bpm?.maxBpm && bpm.minBpm
-                    ? `${bpm.minBpm} - ${bpm.maxBpm} BPM`
-                    : "BPM"
-                )
-              } 
-            </Button>
-          </PopoverTrigger>
-
-          <PopoverContent className="p-8 flex items-start justify-start animate-scaleIn">
-            <div className="space-y-4">
-              <RadioGroup defaultValue="exact" value={bpmType}>
-                <Radio value="exact" onChange={() => setBpmType("exact")}>Exact</Radio>
-                <Radio value="range" onChange={() => setBpmType("range")}>Range</Radio>
-              </RadioGroup>
-
-              {
-                bpmType == "exact" ? (
-                  <div className="mt-4">
-                    <Input
-                      type="number" variant="bordered"
-                      label="BPM" labelPlacement="outside"
-                      placeholder="Enter tempo"
-                      onChange={(e: any) => setBpm({ ...bpm, bpm: e.target.value })}
-                      value={bpm?.bpm?.toString() ?? ""}
-                    />
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3 mt-4">
-                    <Input
-                      type="number" variant="bordered"
-                      label="Minimum" labelPlacement="outside" endContent="BPM"
-                      placeholder="Min tempo"
-                      onChange={(e: any) => setBpm({...bpm, minBpm: parseInt(e.target.value) })}
-                      value={bpm?.minBpm?.toString() ?? ""}
-                    />
-
-                    <Input
-                      type="number" variant="bordered"
-                      label="Maximum" labelPlacement="outside" endContent="BPM"
-                      placeholder="Max tempo"
-                      onChange={(e: any) => setBpm({...bpm, maxBpm: parseInt(e.target.value) })}
-                      value={bpm?.maxBpm?.toString() ?? ""}
-                    />
-                  </div>
-                )
-              }
+      {/* Layout: sidebar + content */}
+      <div className="flex gap-4 min-h-0 flex-1">
+        {/* left sidebar filters */}
+        {sidebarOpen && (
+        <aside className="w-72 xl:w-80 shrink-0 sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto card p-4 rounded-lg pb-6">
+          <div className="text-xs uppercase tracking-wide text-gray-400 mb-3">Filters</div>
+          <div className="space-y-4 text-sm">
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={compactMode} onChange={(e) => setCompactMode(e.target.checked)} />
+                Compact rows
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={hoverAudition} onChange={(e) => setHoverAudition(e.target.checked)} />
+                Play on hover
+              </label>
+              {hoverAudition && (
+                <label className="flex items-center gap-2">
+                  Delay
+                  <input type="range" min={0} max={600} value={hoverDelayMs} onChange={(e)=>setHoverDelayMs(parseInt((e.target as HTMLInputElement).value))}/>
+                  <span className="tabular-nums">{hoverDelayMs}ms</span>
+                </label>
+              )}
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={autoPlayOnNavigate} onChange={(e) => setAutoPlayOnNavigate(e.target.checked)} />
+                Auto-play on Arrow keys
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={favoritesOnly} onChange={(e) => setFavoritesOnly(e.target.checked)} />
+                Favorites only
+              </label>
             </div>
-          </PopoverContent>
-        </Popover>
 
-        <Select aria-label="Type"
-          selectedKeys={[sampleType]} onChange={(e: any) => setSampleType(e.target.value as SpliceSampleType)}
-          variant="bordered" className="min-w-44"
-        >
-          <SelectItem key="any">Any</SelectItem>
-          <SelectItem key="oneshot">One-Shots</SelectItem>
-          <SelectItem key="loop">Loops</SelectItem>
-        </Select>
-      </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-gray-400">Waveform width</span>
+              <div className="flex items-center gap-2">
+                <input className="grow" type="range" min={280} max={800} value={waveformWidth} onChange={(e) => setWaveformWidth(parseInt((e.target as HTMLInputElement).value))} />
+                <span className="tabular-nums">{waveformWidth}px</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-gray-400">Duration</span>
+              <label className="flex items-center gap-2">
+                Min
+                <input className="grow" type="range" min={0} max={60} value={minDuration} onChange={(e)=>setMinDuration(parseInt((e.target as HTMLInputElement).value))} />
+                <span className="tabular-nums">{minDuration}s</span>
+              </label>
+              <label className="flex items-center gap-2">
+                Max
+                <input className="grow" type="range" min={1} max={120} value={maxDuration} onChange={(e)=>setMaxDuration(parseInt((e.target as HTMLInputElement).value))} />
+                <span className="tabular-nums">{maxDuration}s</span>
+              </label>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-gray-400">BPM</span>
+              <label className="flex items-center gap-2">
+                Min
+                <input className="grow" type="range" min={0} max={240} value={minBpm} onChange={(e)=>setMinBpm(parseInt((e.target as HTMLInputElement).value))} />
+                <span className="tabular-nums">{minBpm}</span>
+              </label>
+              <label className="flex items-center gap-2">
+                Max
+                <input className="grow" type="range" min={0} max={300} value={maxBpm} onChange={(e)=>setMaxBpm(parseInt((e.target as HTMLInputElement).value))} />
+                <span className="tabular-nums">{maxBpm}</span>
+              </label>
+            </div>
+
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={sortKeyProximity} onChange={(e)=>setSortKeyProximity(e.target.checked)} />
+              Sort by key proximity
+            </label>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
+                onClick={() => pbCtx.cancellation?.()}
+              >Stop all</button>
+              <button
+                className="px-2 py-1 rounded border border-gray-600 hover:bg-white/5"
+                onClick={() => {
+                  setMinDuration(0); setMaxDuration(30); setMinBpm(0); setMaxBpm(999); setFavoritesOnly(false); setSortKeyProximity(false);
+                }}
+              >Reset</button>
+            </div>
+
+            {/* Tag/Key/BPM selectors moved here */}
+            <div className="pt-4 space-y-3">
+              {/* Instruments popover */}
+              <Popover placement="bottom" showArrow>
+                <PopoverTrigger>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Instruments</Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                  <div className="flex flex-col gap-2">
+                    { knownInstruments.length === 0 ? (
+                      <div className="text-xs text-gray-400">No instruments yet. Type a query or click again to refresh.</div>
+                    ) : knownInstruments.map((x: any) => (
+                      <label key={x.uuid} className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={instruments.has(x.uuid)} onChange={(e)=>{
+                          const next = new Set(instruments);
+                          if (e.target.checked) next.add(x.uuid); else next.delete(x.uuid);
+                          setInstruments(next);
+                        }} />
+                    {instrumentSvg(x.name)}
+                    <span>{toTitle(x.name)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* Genres popover */}
+              <Popover placement="bottom" showArrow>
+                <PopoverTrigger>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Genres</Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                  <div className="grid grid-cols-1 gap-2">
+                    { knownGenres.length === 0 ? (
+                      <div className="text-xs text-gray-400">No genres yet. Type a query or click again to refresh.</div>
+                    ) : knownGenres.map((x: any) => (
+                      <label key={x.uuid} className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={genres.has(x.uuid)} onChange={(e)=>{
+                          const next = new Set(genres);
+                          if (e.target.checked) next.add(x.uuid); else next.delete(x.uuid);
+                          setGenres(next);
+                        }} />
+                        <span>{toTitle(x.name)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              {/* Tags popover */}
+              <Popover placement="bottom" showArrow>
+                <PopoverTrigger>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Tags</Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
+                  <div className="grid grid-cols-1 gap-2">
+                    { (knownTags.length ? knownTags : Array.from(tags)).length === 0 ? (
+                      <div className="text-xs text-gray-400">No tags yet. Type a query or click again to refresh.</div>
+                    ) : (knownTags.length ? knownTags : Array.from(tags)).map((x: any) => (
+                      <label key={x.uuid} className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={tags.some((t: any) => t.uuid === x.uuid)} onChange={(e)=>{
+                          if (e.target.checked) {
+                            if (!tags.some((t: any) => t.uuid === x.uuid)) { setTags([...(tags as any), x]); }
+                          } else {
+                            setTags((tags as any).filter((t: any) => t.uuid !== x.uuid));
+                          }
+                        }} />
+                        <span>{toTitle(x.label || x.name)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <div className="flex gap-2">
+                <Popover placement="bottom" showArrow={true} isOpen={keyPopOpen} onOpenChange={(o)=>setKeyPopOpen(!!o)}>
+                  <PopoverTrigger>
+                    <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>} onClick={()=>setKeyPopOpen(v=>!v)}>
+                      { 
+                        (musicKey == null && chordType == null) ? "Key"
+                          : `${musicKey ?? ""}${chordType == null ? "" : chordType == "major" ? " Major" : " Minor"}`
+                      }
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="flex p-8 animate-scaleIn z-20">
+                    <KeyScaleSelection
+                      onChordSet={(c)=>{ setChordType(c); setKeyPopOpen(false); }} onKeySet={(k)=>{ setMusicKey(k); setKeyPopOpen(false); }}
+                      selectedChord={chordType} selectedKey={musicKey}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <Popover placement="bottom" showArrow>
+                  <PopoverTrigger>
+                    <Button variant="bordered" className="min-w-32 justify-between" endContent={<ChevronDownIcon/>}>
+                      { sampleType === 'any' ? 'Any' : sampleType === 'oneshot' ? 'One-Shots' : 'Loops' }
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-2 w-40">
+                    <div className="flex flex-col">
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('any' as any)}>Any</button>
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('oneshot')}>One-Shots</button>
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('loop')}>Loops</button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          </div>
+        </aside>
+        )}
+
+        {/* main content */}
+        <section className="flex-1 min-w-0 min-h-0 flex">
 
       {
         query.length > 0 && results
@@ -624,20 +799,80 @@ function App() {
             <p className="text-gray-400 text-sm">Try changing your query and filters</p>
           </div>
         : <div ref={resultContainer}
-            className="card my-4 mb-16 overflow-y-scroll p-6 rounded-lg flex flex-col gap-4 animate-fadeIn"
+            className="card my-4 mb-16 overflow-y-auto overflow-x-hidden rounded-lg flex flex-col min-h-0 gap-0 animate-fadeIn flex-1 max-w-full"
         >
-              <div className="flex justify-between items-center mb-2">
-                <div className="space-y-2">
-                  <h4 className="text-xl font-semibold">Samples</h4>
-                  <p className="text-sm text-gray-400">Found {resultCount.toLocaleString()} {resultCount !== 1 ? "samples" : "sample"}</p>
+              <div className="sticky top-0 z-10 bg-black/60 backdrop-blur supports-[backdrop-filter]:bg-black/40 border-b border-white/10 px-4 md:px-6 py-3 flex flex-wrap gap-3 justify-between items-center">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="space-y-1 min-w-0">
+                    <h4 className="text-xl font-semibold truncate">Samples</h4>
+                    <p className="text-sm text-gray-400 truncate">Found {resultCount.toLocaleString()} {resultCount !== 1 ? "samples" : "sample"}</p>
+                  </div>
+                  {/* active filters count */}
+                  <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/15 text-gray-200 whitespace-nowrap">
+                    {(() => {
+                      let c = 0;
+                      if (favoritesOnly) c++;
+                      if (Array.from(tags).length) c++;
+                      if (instruments.size) c++;
+                      if (genres.size) c++;
+                      if (musicKey) c++;
+                      if (chordType) c++;
+                      if (sampleType !== 'any') c++;
+                      if (minDuration > 0 || maxDuration < 120) c++;
+                      if (minBpm > 0 || maxBpm < 300) c++;
+                      if (bpm?.bpm || bpm?.minBpm || bpm?.maxBpm) c++;
+                      return `${c} active`;
+                    })()}
+                  </span>
                 </div>
 
-        <div className="flex items-center gap-3"> 
-                  { searchLoading && <CircularProgress aria-label="Loading results..." className="w-6 h-6"/> } 
+                <div className="flex items-center gap-3 ml-auto">
+                  {/* sort quick access */}
+                  <Popover placement="bottom" showArrow>
+                    <PopoverTrigger>
+                      <Button variant="bordered" className="w-40 justify-between" endContent={<ChevronDownIcon/>}>
+                        { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="p-2 w-52">
+                      <div className="flex flex-col">
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('relevance')}>Most relevant</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('popularity')}>Most popular</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('recency')}>Most recent</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('random')}>Random</button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  { searchLoading && <CircularProgress aria-label="Loading results..." className="w-6 h-6"/> }
                 </div>
               </div>
 
               <div className="flex-1">
+                { useInfinite ? (
+                  <InfiniteResults
+                    items={(favoritesOnly ? results.filter((r: any) => localStorage.getItem(`fav:${r.uuid}`) === '1') : results)
+                      .filter((r: any) => {
+                        const durSec = (r.duration ?? 0) / 1000;
+                        const bpmOk = (r.bpm == null) || (r.bpm >= minBpm && r.bpm <= maxBpm);
+                        return durSec >= minDuration && durSec <= maxDuration && bpmOk;
+                      })
+                      .sort((a: any, b: any) => {
+                        if (!sortKeyProximity || !musicKey) return 0;
+                        const ka = (a.key || '').toUpperCase();
+                        const kb = (b.key || '').toUpperCase();
+                        const dist = (k: string) => (k && musicKey) ? Math.min(Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0)), 12 - Math.abs(k.charCodeAt(0) - (musicKey as string).charCodeAt(0))) : 99;
+                        return dist(ka) - dist(kb);
+                      })}
+                    renderItem={(sample, index) => (
+                      <div key={sample.uuid} className="pr-2" data-sample-idx={index}>
+                        <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} isSelected={selectedIndex === index} />
+                      </div>
+                    )}
+                    loadMore={async () => { changePage(currentPage + 1); }}
+                    hasMore={currentPage < totalPages}
+                    root={resultContainer.current}
+                  />
+                ) : (
                 <VirtualList
                   items={(favoritesOnly ? results.filter((r: any) => localStorage.getItem(`fav:${r.uuid}`) === '1') : results)
                     .filter((r: any) => {
@@ -653,20 +888,25 @@ function App() {
                       return dist(ka) - dist(kb);
                     })}
                   height={600}
-                  itemHeight={compactMode ? 100 : 140}
+                  itemHeight={compactMode ? 120 : 160}
                   render={(sample, index) => (
                     <div key={sample.uuid} className="pr-2" data-sample-idx={index}>
-                      <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} />
+                      <SampleListEntry sample={sample} onTagClick={handleTagClick} ctx={pbCtx} waveformWidth={waveformWidth} compact={compactMode} hoverAudition={hoverAudition} hoverDelayMs={hoverDelayMs} isSelected={selectedIndex === index} />
                     </div>
                   )}
-                />
+                />)}
               </div>
 
-              <div className="w-full flex justify-center">
+              { !useInfinite && (
+              <div className="w-full flex justify-center px-6 pb-4">
+                <div className="flex items-center gap-3 overflow-visible">
                 <Pagination variant="bordered" total={totalPages}
                   page={currentPage} onChange={changePage}
                 />
+                  <span className="text-xs text-gray-400 whitespace-nowrap">of {totalPages.toLocaleString()} pages</span>
               </div>
+              </div>
+              )}
             </div>
           : <div className="card flex flex-col items-center h-full justify-center space-y-6 rounded-lg animate-fadeIn p-12">
               <img className="w-32 animate-scaleIn" src="img/blob-salute.png"/>
@@ -697,6 +937,8 @@ function App() {
               </div>
             </div>
       }
+        </section>
+      </div>
     </main>
     </ToastProvider>
   );

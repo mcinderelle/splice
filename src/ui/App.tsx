@@ -90,6 +90,9 @@ function App() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [keyPopOpen, setKeyPopOpen] = useState(false);
   const [bpmPopOpen, setBpmPopOpen] = useState(false);
+  const [sortOpenTop, setSortOpenTop] = useState(false);
+  const [sortOpenSticky, setSortOpenSticky] = useState(false);
+  const [sampleTypeOpen, setSampleTypeOpen] = useState(false);
 
   // Inline SVG badge for instruments (unique shapes + colors)
   const toTitle = (s: string) => s.replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
@@ -282,7 +285,7 @@ function App() {
       const isTyping = activeElement?.tagName === 'INPUT' || 
                        activeElement?.tagName === 'TEXTAREA';
       
-      // Space/P to toggle play/pause on selected/focused row
+      // Space/P to toggle play/pause on selected/focused row (or current playing)
       if ((e.code === 'Space' || e.key.toLowerCase() === 'p') && !isTyping) {
         e.preventDefault();
         const idx = (selectedIndex != null && selectedIndex >= 0)
@@ -290,6 +293,9 @@ function App() {
           : (focusedIndexRef.current >= 0 ? focusedIndexRef.current : -1);
         if (idx >= 0) {
           const el = document.querySelector(`[data-sample-idx="${idx}"] button.play-button`) as HTMLButtonElement | null;
+          el?.click();
+        } else if (pbCtx.currentUuid) {
+          const el = document.querySelector(`[data-sample-uuid="${pbCtx.currentUuid}"] button.play-button`) as HTMLButtonElement | null;
           el?.click();
         }
       }
@@ -532,18 +538,18 @@ function App() {
             className="w-full max-w-2xl"
           />
 
-        <Popover placement="bottom" showArrow>
+        <Popover placement="bottom" showArrow isOpen={sortOpenTop} onOpenChange={(open)=>setSortOpenTop(!!open)}>
           <PopoverTrigger>
-            <Button variant="bordered" className="w-48 justify-between" endContent={<ChevronDownIcon/>}>
+            <Button variant="bordered" className="w-48 justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>setSortOpenTop(true)}>
               { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
             </Button>
           </PopoverTrigger>
           <PopoverContent className="p-2 w-56">
             <div className="flex flex-col">
-              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('relevance')}>Most relevant</button>
-              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('popularity')}>Most popular</button>
-              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('recency')}>Most recent</button>
-              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('random')}>Random</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('relevance'); setSortOpenTop(false); }}>Most relevant</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('popularity'); setSortOpenTop(false); }}>Most popular</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('recency'); setSortOpenTop(false); }}>Most recent</button>
+              <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('random'); setSortOpenTop(false); }}>Random</button>
             </div>
           </PopoverContent>
         </Popover>
@@ -678,9 +684,9 @@ function App() {
             {/* Tag/Key/BPM selectors moved here */}
             <div className="pt-4 space-y-3">
               {/* Instruments popover */}
-              <Popover placement="bottom" showArrow>
+              <Popover placement="bottom" showArrow isOpen={instOpen} onOpenChange={(open)=>setInstOpen(!!open)}>
                 <PopoverTrigger>
-                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Instruments</Button>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setInstOpen(true); }}>Instruments</Button>
                 </PopoverTrigger>
                 <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
                   <div className="flex flex-col gap-2">
@@ -702,9 +708,9 @@ function App() {
               </Popover>
 
               {/* Genres popover */}
-              <Popover placement="bottom" showArrow>
+              <Popover placement="bottom" showArrow isOpen={genresOpen} onOpenChange={(open)=>setGenresOpen(!!open)}>
                 <PopoverTrigger>
-                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Genres</Button>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setGenresOpen(true); }}>Genres</Button>
                 </PopoverTrigger>
                 <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
                   <div className="grid grid-cols-1 gap-2">
@@ -725,9 +731,9 @@ function App() {
               </Popover>
 
               {/* Tags popover */}
-              <Popover placement="bottom" showArrow>
+              <Popover placement="bottom" showArrow isOpen={tagsOpen} onOpenChange={(open)=>setTagsOpen(!!open)}>
                 <PopoverTrigger>
-                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onClick={()=>ensureContraintsGathered()}>Tags</Button>
+                  <Button variant="bordered" className="w-full justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>{ ensureContraintsGathered(); setTagsOpen(true); }}>Tags</Button>
                 </PopoverTrigger>
                 <PopoverContent className="p-3 w-72 max-h-72 overflow-auto z-50">
                   <div className="grid grid-cols-1 gap-2">
@@ -750,9 +756,9 @@ function App() {
               </Popover>
 
               <div className="flex gap-2">
-                <Popover placement="bottom" showArrow={true} isOpen={keyPopOpen} onOpenChange={(o)=>setKeyPopOpen(!!o)}>
+                <Popover placement="bottom" showArrow={true} isOpen={keyPopOpen} onOpenChange={(open)=>setKeyPopOpen(!!open)}>
                   <PopoverTrigger>
-                    <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>} onClick={()=>setKeyPopOpen(v=>!v)}>
+                    <Button variant="bordered" className="min-w-36" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>setKeyPopOpen(true)}>
                       { 
                         (musicKey == null && chordType == null) ? "Key"
                           : `${musicKey ?? ""}${chordType == null ? "" : chordType == "major" ? " Major" : " Minor"}`
@@ -767,17 +773,17 @@ function App() {
                   </PopoverContent>
                 </Popover>
 
-                <Popover placement="bottom" showArrow>
+                <Popover placement="bottom" showArrow isOpen={sampleTypeOpen} onOpenChange={(open)=>setSampleTypeOpen(!!open)}>
                   <PopoverTrigger>
-                    <Button variant="bordered" className="min-w-32 justify-between" endContent={<ChevronDownIcon/>}>
+                    <Button variant="bordered" className="min-w-32 justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>setSampleTypeOpen(true)}>
                       { sampleType === 'any' ? 'Any' : sampleType === 'oneshot' ? 'One-Shots' : 'Loops' }
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="p-2 w-40">
                     <div className="flex flex-col">
-                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('any' as any)}>Any</button>
-                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('oneshot')}>One-Shots</button>
-                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSampleType('loop')}>Loops</button>
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSampleType('any' as any); setSampleTypeOpen(false); }}>Any</button>
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSampleType('oneshot'); setSampleTypeOpen(false); }}>One-Shots</button>
+                      <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSampleType('loop'); setSampleTypeOpen(false); }}>Loops</button>
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -828,18 +834,18 @@ function App() {
 
                 <div className="flex items-center gap-3 ml-auto">
                   {/* sort quick access */}
-                  <Popover placement="bottom" showArrow>
+                  <Popover placement="bottom" showArrow isOpen={sortOpenSticky} onOpenChange={(open)=>setSortOpenSticky(!!open)}>
                     <PopoverTrigger>
-                      <Button variant="bordered" className="w-40 justify-between" endContent={<ChevronDownIcon/>}>
+                      <Button variant="bordered" className="w-40 justify-between" endContent={<ChevronDownIcon/>} onMouseDown={(e)=>e.stopPropagation()} onClick={()=>setSortOpenSticky(true)}>
                         { sortBy === 'relevance' ? 'Most relevant' : sortBy === 'popularity' ? 'Most popular' : sortBy === 'recency' ? 'Most recent' : 'Random' }
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="p-2 w-52">
                       <div className="flex flex-col">
-                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('relevance')}>Most relevant</button>
-                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('popularity')}>Most popular</button>
-                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('recency')}>Most recent</button>
-                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>setSortBy('random')}>Random</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('relevance'); setSortOpenSticky(false); }}>Most relevant</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('popularity'); setSortOpenSticky(false); }}>Most popular</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('recency'); setSortOpenSticky(false); }}>Most recent</button>
+                        <button className="text-left px-3 py-2 hover:bg-white/5 rounded" onClick={()=>{ setSortBy('random'); setSortOpenSticky(false); }}>Random</button>
                       </div>
                     </PopoverContent>
                   </Popover>

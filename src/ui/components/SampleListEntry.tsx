@@ -53,7 +53,7 @@ function SampleListEntryBase(
   const packCover = (pack.files?.find((x: any) => x.asset_file_type_slug == "cover_image")?.url) || "img/missing-cover.png";
   const isLoop = sample.asset_category_slug === 'loop';
   const displayName = (sample.name && sample.name.split('/').pop()) || sample.name || 'Unknown sample';
-  const coverSize = compact ? 112 : 144;
+  const coverSize = compact ? 104 : 144;
   function startFetching() {
     if (fetchAheadRef.current != null)
       return;
@@ -144,6 +144,20 @@ function SampleListEntryBase(
     };
   }, [sample.asset_category_slug]);
 
+  // Global stop-all listener to enforce exclusive playback across all rows
+  useEffect(() => {
+    const stopAllHandler = () => {
+      try {
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+      } catch {}
+      setPlaying(false);
+    };
+    window.addEventListener('splicedd:stop-all', stopAllHandler as any);
+    return () => window.removeEventListener('splicedd:stop-all', stopAllHandler as any);
+  }, []);
+
   function stop() {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -214,8 +228,18 @@ function SampleListEntryBase(
         ev.stopPropagation();
       }
 
-      // Stop any currently playing sample
-      try { ctx.cancellation?.(); } catch {}
+      // Stop any currently playing sample (capture to avoid races)
+      try {
+        const prevCancel = ctx.cancellation;
+        if (prevCancel && prevCancel !== stop) prevCancel();
+      } catch {}
+
+      // Register this row as the active controller immediately to ensure exclusivity during load
+      ctx.setCancellation(() => stop);
+      try { (ctx as any).setCurrentUuid?.(sample.uuid); } catch {}
+
+      // Broadcast a global stop to ensure any stragglers are paused
+      try { window.dispatchEvent(new CustomEvent('splicedd:stop-all')); } catch {}
 
       // If already playing, just pause
       if (playing) {
@@ -268,10 +292,11 @@ function SampleListEntryBase(
         lastErrorLoggedSrcRef.current = null;
         // Ensure current preview settings
         try {
-          const pitching = semitones !== 0;
-          (audio as any).preservesPitch = pitching ? false : cfg().preservePitch;
-          (audio as any).mozPreservesPitch = pitching ? false : cfg().preservePitch;
-          (audio as any).webkitPreservesPitch = pitching ? false : cfg().preservePitch;
+          // Preserve pitch when only speed changes; allow pitch shift when semitones != 0
+          const preserve = semitones === 0;
+          (audio as any).preservesPitch = preserve;
+          (audio as any).mozPreservesPitch = preserve;
+          (audio as any).webkitPreservesPitch = preserve;
         } catch {}
         audio.playbackRate = playbackRate * Math.pow(2, semitones / 12);
         
@@ -332,9 +357,7 @@ function SampleListEntryBase(
       setPlaying(true);
       setErrorMessage(null);
 
-      // register cancellation to allow exclusive playback
-      ctx.setCancellation(() => stop);
-      try { (ctx as any).setCurrentUuid?.(sample.uuid); } catch {}
+      // Already registered above; keep state consistent
     } catch (error) {
       console.error("Error playing audio:", error);
       setErrorMessage('Could not play sample');
@@ -365,6 +388,19 @@ function SampleListEntryBase(
       notify('error', 'Decode failed');
       throw error;
     }
+  }
+
+  // Stop any other playing sample immediately for exclusivity
+  function pbExclusiveStopOthers() {
+    try {
+      // Call current cancellation if another sample registered it
+      if (ctx.cancellation) {
+        const cancel = ctx.cancellation;
+        // Clear before calling to avoid recursive loops
+        ctx.setCancellation?.(null as any);
+        cancel();
+      }
+    } catch {}
   }
 
   // Cross-platform filename sanitization
@@ -459,7 +495,6 @@ function SampleListEntryBase(
     try {
       // Only support drag in Tauri mode
       if (typeof window === 'undefined' || !('__TAURI__' in window)) {
-        console.log('Drag and drop is only available in the Tauri desktop app');
         return;
       }
       
@@ -538,11 +573,12 @@ function SampleListEntryBase(
     <div onMouseOver={startFetching}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className={`card-subtle flex w-full px-4 md:px-6 py-2.5 md:py-3.5 gap-4 md:gap-6 rounded-lg ${compact ? 'min-h-[96px]' : 'min-h-[128px]'} flex-wrap md:flex-nowrap
+      className={`card-subtle flex w-full ${compact ? 'px-3 md:px-4 py-1.5 md:py-2.5 gap-3 md:gap-4' : 'px-4 md:px-6 py-2.5 md:py-3.5 gap-4 md:gap-6'} rounded-lg ${compact ? 'min-h-[88px]' : 'min-h-[128px]'} flex-wrap md:flex-nowrap
                     items-center cursor-pointer select-none transition-all duration-300 group
                     ${playing ? 'ring-2 ring-emerald-400 bg-white/5 shadow-[0_0_36px_-6px_rgba(16,185,129,0.55)] backdrop-blur-sm' : ''}
                     ${!playing && isSelected ? 'ring-2 ring-sky-400/70 bg-white/5 shadow-[0_0_32px_-10px_rgba(56,189,248,0.6)]' : ''}
                     ${!playing ? 'hover:bg-white/5 hover:shadow-[0_0_30px_-12px_rgba(255,255,255,0.25)]' : ''}`}
+         data-sample-uuid={sample.uuid}
     >
       { /* when loading, set the cursor for everything to a waiting icon */}
       {fgLoading && <style> {`* { cursor: wait }`} </style>}
@@ -575,7 +611,7 @@ function SampleListEntryBase(
           </a>
         </Tooltip>
 
-        <div className="flex items-center gap-2 w-28 md:w-32 justify-start">
+        <div className={`flex items-center ${compact ? 'gap-1.5 w-24 md:w-28' : 'gap-2 w-28 md:w-32'} justify-start`}>
           <button onClick={handlePlayClick}
                className={`play-button cursor-pointer w-10 h-10 md:w-12 md:h-12 rounded-full border flex items-center justify-center 
                           transition-all duration-300 backdrop-blur-sm focus:outline-none focus:ring-2
@@ -608,7 +644,7 @@ function SampleListEntryBase(
            onDragStart={handleWebDragStart}
            onClick={handlePlayClick}
            style={{ cursor: "move" }}>
-        <div className="flex-1 min-w-[300px] flex gap-3 md:gap-4 items-center overflow-hidden group-hover:translate-x-1 transition-transform duration-300">
+        <div className={`flex-1 min-w-[240px] flex ${compact ? 'gap-2 md:gap-3' : 'gap-3 md:gap-4'} items-center overflow-hidden group-hover:translate-x-1 transition-transform duration-300`}>
           <a
             href={pack?.permalink_base_url ? `https://splice.com/sounds/labels/${pack.permalink_base_url}` : '#'}
             target="_blank"
@@ -617,23 +653,7 @@ function SampleListEntryBase(
             className="font-bold text-[15px] text-white group-hover:text-white transition-colors truncate underline-offset-2 hover:underline flex-1 min-w-0 pr-2"
             title={displayName}
           >
-            {/** highlight query terms if present in URL param q */}
-            {(() => {
-              const params = new URLSearchParams(window.location.search);
-              const q = (params.get('q') || '').trim();
-              const name = displayName as string;
-              if (!q) return name || 'Unknown sample';
-              const idx = (name || '').toLowerCase().indexOf(q.toLowerCase());
-              if (idx === -1) return name || 'Unknown sample';
-              const before = name.slice(0, idx);
-              const mid = name.slice(idx, idx + q.length);
-              const after = name.slice(idx + q.length);
-              return (<>
-                {before}
-                <span className="bg-white/20 rounded px-1">{mid}</span>
-                {after}
-              </>);
-            })()}
+            {displayName || 'Unknown sample'}
           </a>
           <span
             title={isLoop ? 'Loop' : 'One‑shot'}
@@ -658,7 +678,7 @@ function SampleListEntryBase(
           </div>
 
           {/* quick actions */}
-          <div className="ml-auto flex items-center gap-2 pr-1">
+          <div className={`ml-auto flex items-center ${compact ? 'gap-1.5 pr-0.5' : 'gap-2 pr-1'}`}>
             <button
               onClick={toggleFavorite}
               aria-label={isFav ? 'Unfavorite' : 'Favorite'}
@@ -745,6 +765,62 @@ function SampleListEntryBase(
             isPlaying={playing}
             currentTime={currentTime}
             duration={duration || sample.duration / 1000}
+            onSeek={async (t)=>{
+              try {
+                // Ensure audio is loaded
+                if (!audioRef.current) return;
+                // Enforce exclusivity immediately on seek, even before media loads
+                try {
+                  const prevCancel = ctx.cancellation;
+                  if (prevCancel && prevCancel !== stop) prevCancel();
+                } catch {}
+                ctx.setCancellation(() => stop);
+                try { (ctx as any).setCurrentUuid?.(sample.uuid); } catch {}
+                try { window.dispatchEvent(new CustomEvent('splicedd:stop-all')); } catch {}
+                if (!blobUrlRef.current || audioRef.current.src === '') {
+                  setFgLoading(true);
+                  try { await ensureAudioDecoded(); } catch { /* handled in ensureAudioDecoded */ }
+                  if (decodedSampleRef.current) {
+                    // Create or reuse blob URL
+                    if (blobUrlRef.current && blobUrlRef.current.startsWith('blob:')) {
+                      URL.revokeObjectURL(blobUrlRef.current);
+                    }
+                    const decodedBuffer = decodedSampleRef.current!;
+                    const arrayBuffer = decodedBuffer instanceof ArrayBuffer ? decodedBuffer : new Uint8Array(decodedBuffer).buffer;
+                    const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+                    blobUrlRef.current = URL.createObjectURL(blob);
+                    audioRef.current.src = blobUrlRef.current;
+                    // load metadata so seeking works
+                    await new Promise<void>((resolve) => {
+                      const onLoaded = () => { audioRef.current?.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+                      audioRef.current?.addEventListener('loadedmetadata', onLoaded, { once: true });
+                      audioRef.current?.load();
+                    });
+                  }
+                  setFgLoading(false);
+                }
+                // Clamp and seek
+                const dur = (duration || sample.duration / 1000) || 0;
+                const target = Math.max(0, Math.min(dur - 0.001, t));
+                // Ensure exclusive playback when seeking
+                try { pbExclusiveStopOthers(); } catch {}
+                // If metadata still not ready, wait
+                if (!isFinite(audioRef.current.duration) || audioRef.current.duration === 0) {
+                  await new Promise<void>((resolve) => {
+                    const onLoaded = () => { audioRef.current?.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+                    audioRef.current?.addEventListener('loadedmetadata', onLoaded, { once: true });
+                  });
+                }
+                audioRef.current.currentTime = target;
+                setCurrentTime(target);
+                // Always start playback from the clicked position
+                try {
+                  await audioRef.current.play();
+                  setPlaying(true);
+                  setErrorMessage(null);
+                } catch {}
+              } catch {}
+            }}
           />
         </div>
       </div>
@@ -797,7 +873,7 @@ function SampleListEntryBase(
         <div className="flex items-center gap-2 ml-2 text-[11px] text-gray-400" onClick={(e)=>e.stopPropagation()}>
           <div className="flex items-center gap-2">
             <span>Speed</span>
-            <input aria-label="Speed" type="range" min={0.5} max={2} step={0.05} value={playbackRate} onChange={(e)=>{ const v = parseFloat((e.target as HTMLInputElement).value); setPlaybackRate(v); if(audioRef.current) audioRef.current.playbackRate = v * Math.pow(2, semitones/12); }} />
+            <input aria-label="Speed" className="slider-white" type="range" min={0.5} max={2} step={0.05} value={playbackRate} onChange={(e)=>{ const v = parseFloat((e.target as HTMLInputElement).value); setPlaybackRate(v); if(audioRef.current) audioRef.current.playbackRate = v * Math.pow(2, semitones/12); }} />
             <span className="tabular-nums">{playbackRate.toFixed(2)}x</span>
             {sample.bpm != null && (
               <span className="tabular-nums text-sky-300 bg-sky-500/10 rounded px-2 py-0.5 border border-sky-400/30 shadow-[0_0_12px_rgba(56,189,248,0.35)]">

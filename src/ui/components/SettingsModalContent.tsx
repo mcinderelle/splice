@@ -11,6 +11,7 @@ export default function SettingsModalContent() {
   const preservePitch = useCfgSyncedState<boolean>("preservePitch");
   const waveformWidth = useCfgSyncedState<number>("waveformWidth");
   const infiniteScroll = useCfgSyncedState<boolean>("infiniteScroll");
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
 
   function closeFirstTimeSetup(onClose: () => void) {
     mutateCfg({ configured: true });
@@ -30,7 +31,7 @@ export default function SettingsModalContent() {
         </ModalHeader>
         <ModalBody className="pb-8 ml-2">
           <div className="space-y-4">
-            { (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) && (
+          { isTauri && (
               <>
                 <div className="space-y-1">
                   <h4 className="text-medium font-medium">Sample path</h4>
@@ -135,7 +136,7 @@ export default function SettingsModalContent() {
             <div className="flex">
               <Button
                 color="primary" variant="ghost" className="w-full"
-                isDisabled={cfg().sampleDir.trim() == ""}
+                isDisabled={isTauri ? (cfg().sampleDir.trim() == "") : false}
                 onClick={() => closeFirstTimeSetup(onClose)}
               >Apply</Button>
             </div>

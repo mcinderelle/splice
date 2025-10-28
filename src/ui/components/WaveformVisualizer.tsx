@@ -7,9 +7,10 @@ interface WaveformVisualizerProps {
   duration?: number;
   className?: string;
   waveformDataOverride?: number[] | null;
+  onSeek?: (timeSeconds: number) => void;
 }
 
-export default function WaveformVisualizer({ audioSrc = null, isPlaying, currentTime = 0, duration = 1, className = "", waveformDataOverride = null }: WaveformVisualizerProps) {
+export default function WaveformVisualizer({ audioSrc = null, isPlaying, currentTime = 0, duration = 1, className = "", waveformDataOverride = null, onSeek }: WaveformVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [waveformData, setWaveformData] = useState<number[]>([]);
   const waveformDataRef = useRef<Map<string, number[]>>(new Map());
@@ -115,6 +116,20 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
     };
   }, [isPlaying, currentTime, duration]);
 
+  // Hard-sync animation time to external currentTime on significant jumps (e.g., seeking)
+  useEffect(() => {
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    setAnimatedTime(prev => {
+      const diff = Math.abs(prev - currentTime);
+      if (diff > 0.05) {
+        // Reset rAF delta to avoid time drift after seeking
+        lastTsRef.current = null;
+        return Math.min(duration, Math.max(0, currentTime));
+      }
+      return prev;
+    });
+  }, [currentTime, duration]);
+
   // Resize observer to keep canvas responsive
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -197,6 +212,17 @@ export default function WaveformVisualizer({ audioSrc = null, isPlaying, current
       width={canvasWidth}
       height={40}
       className={`h-7.5 w-full ${className}`}
+      onClick={(e)=>{
+        try {
+          e.stopPropagation();
+          if (!onSeek || !canvasRef.current || !duration || duration <= 0) return;
+          const rect = canvasRef.current.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const ratio = Math.max(0, Math.min(1, x / rect.width));
+          const target = ratio * duration;
+          onSeek(target);
+        } catch {}
+      }}
     />
   );
 }
